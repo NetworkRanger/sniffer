@@ -1,0 +1,25 @@
+[package]
+name = "sinffer"
+version = "0.1.0"
+edition = "2024"
+
+[[example]]
+name = "sniffer1"
+path = "examples/sniffer1.rs"
+
+[[example]]
+name = "sniffer2"
+path = "examples/sniffer2.rs"
+
+[dependencies]
+pcap = "2.4.0"
+pnet = "0.28.0"
+pnet_datalink = "0.35.0"
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
+tokio = { version = "1.50.0", features = ["macros", "fs", "sync"] }
+serde = { version = "1.0.228", features = ["derive"] }
+httparse = "1.10.1"
+tls-parser = "0.12.2"
+hex = "0.4.3"
+bytesize = "1.1.0"
