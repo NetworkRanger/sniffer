@@ -20,11 +20,11 @@ fn main() {
     }
 
     // 列出所有接口
-    // for iface in interfaces() {
-    //     println!("{}: {:?} - {:?}",
-    //              iface.name,
-    //              iface.mac,
-    //              iface.ips.iter().map(|ip| ip.ip()).collect::<Vec<_>>()
-    //     );
-    // }
+    for iface in interfaces() {
+        println!("{}: {:?} - {:?}",
+                 iface.name,
+                 iface.mac,
+                 iface.ips.iter().map(|ip| ip.ip()).collect::<Vec<_>>()
+        );
+    }
 }

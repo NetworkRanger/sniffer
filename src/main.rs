@@ -14,14 +14,17 @@ use bytesize::ByteSize;
 mod utils;
 mod networking;
 mod packet;
+mod config;
 
-use crate::networking::types::tls::{parse_client_hello, TlsPacket};
 use crate::utils::get_mac_by_name;
 use crate::utils::registry::Registry;
+use crate::config::Config;
 
 
 fn main() {
     tracing_subscriber::fmt::init();
+    let config = Config::new();
+    Registry::set("config", config.clone());
 
     let device_list = Device::list().expect("device list failed");
 
@@ -53,10 +56,9 @@ fn main() {
         .unwrap();
 
     let mut now = Instant::now();
-    let mut upload_sum = 0;
-    let mut download_sum = 0;
+    let mut up_bytes: u64 = 0;
+    let mut down_bytes: u64 = 0;
     let mut packet_count = 0;
-    let mut i = 1;
     loop {
         let (packet_res, cap_stats) = pcap_rx
             .recv_timeout(Duration::from_millis(100))
@@ -67,35 +69,32 @@ fn main() {
             Ok(packet) => {
                 if let Some(eth) = EthernetPacket::new(&packet.data) {
                     if eth.get_source().to_string() == mac {
-                        upload_sum += packet.data.len();
+                        up_bytes  += packet.data.len() as u64;
                     } else if eth.get_destination().to_string() == mac {
-                        download_sum += packet.data.len();
+                        down_bytes += packet.data.len() as u64;
                     }
                 }
                 if let Some(stat) = cap_stats {
                     packet_count = stat.received;
                 }
                 
-                if now.elapsed() > Duration::from_secs(1) {
-                    let sedonds_of_avg = now.elapsed().as_secs() as usize;
-                    let upload_sepped = ByteSize((upload_sum / sedonds_of_avg) as u64);
-                    let download_sepped = ByteSize((download_sum / sedonds_of_avg) as u64);
-                    
-                    upload_sum = 0;
-                    download_sum = 0;
-                    packet_count = 0;
-                    now = Instant::now();
-                    if i == 3 {
-                        info!("Total packet_count: {},  Up: {:?}/s, Down: {:?}/s",
+                if now.elapsed() > Duration::from_secs(config.freq) {
+                    let sedonds_of_avg = now.elapsed().as_millis() as u64;
+                    let upload_sepped = ByteSize(up_bytes * 1000 / sedonds_of_avg);
+                    let download_sepped = ByteSize(down_bytes * 1000 / sedonds_of_avg);
+
+                    info!("Total packet_count: {},  Up: {:?}/s, Down: {:?}/s",
                             packet_count,  
                             upload_sepped,
                             download_sepped
-                        );
-                        i = 1;
-                    } else {
-                        i += 1;
-                    }
+                    );
+                    
+                    up_bytes = 0;
+                    down_bytes = 0;
+                    packet_count = 0;
+                    now = Instant::now();
                 }
+                
                 packet::parse_packet(&packet.data);
             }
         }
