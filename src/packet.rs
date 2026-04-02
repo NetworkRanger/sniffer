@@ -3,10 +3,12 @@ use bytesize::ByteSize;
 use pcap::{Active, Capture, PacketHeader};
 use pnet::packet::ethernet::{EtherTypes, EthernetPacket};
 use pnet::packet::ipv4::Ipv4Packet;
-use pnet::packet::Packet;
+pub(crate) use pnet::packet::Packet;
 use pnet::packet::tcp::TcpPacket;
+use pnet::packet::udp::UdpPacket;
 use tracing::{debug, info, trace};
 use crate::config::Config;
+use crate::networking::types::quic;
 use crate::networking::types::tls::{parse_client_hello, TlsPacket};
 use crate::utils::registry::Registry;
 
@@ -22,6 +24,7 @@ pub struct Connection {
     pub src_port: u16,
     pub dst_ip: String,
     pub dst_port: u16,
+    pub protocol: String,
     pub domain: Option<String>,
     pub path: Option<String>,
     pub start: Instant,
@@ -32,7 +35,7 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new(id: String, src_ip: String, src_port: u16, dst_ip: String, dst_port: u16) -> Self {
+    pub fn new(id: String, protocol: String, src_ip: String, src_port: u16, dst_ip: String, dst_port: u16) -> Self {
         let now = Instant::now();
         Connection {
             id,
@@ -40,6 +43,7 @@ impl Connection {
             src_port,
             dst_ip,
             dst_port,
+            protocol: protocol,
             domain: None,
             path: None,
             start: now,
@@ -77,31 +81,10 @@ pub fn parse_packet(data: &[u8]) {
                 if let Some(ip) = Ipv4Packet::new(eth.payload()) {
                     trace!("IPv4: {} -> {}", ip.get_source(), ip.get_destination());
 
+                    // 解析 UDP 层
+                    parse_udp(&ip, &eth);
                     // 解析 TCP 层
-                    if let Some(tcp) = TcpPacket::new(ip.payload()) {
-                        trace!("TCP: {} -> {}", tcp.get_source(), tcp.get_destination());
-                        trace!("Flags: {:?}", tcp.get_flags());
-                        
-                        let config = Registry::get::<Config>("config").unwrap();
-                        let mac = Registry::get::<String>("mac").unwrap();
-                        let src = format!("{}:{}", ip.get_source(), tcp.get_source());
-                        let dst = format!("{}:{}", ip.get_destination(), tcp.get_destination());
-                        let connection_id = format!("{}->{}", src, dst);
-                        
-                        let mut connection = match Registry::get::<Connection>(&connection_id) {
-                            Some(connection) => connection,
-                            None => {
-                                let connection = Connection::new(connection_id.clone(), src, tcp.get_source(), dst, tcp.get_destination());
-                                Registry::set(connection_id.clone(), connection.clone());
-                                connection
-                            }
-                        };
-                        
-                        let payload = tcp.payload();
-                        parse_http_and_tls(payload, &mut connection);
-                        Registry::set(connection_id, connection.clone());
-                        stat_tcp(&eth, &mut connection, mac, payload, &config);
-                    }
+                    // parse_tcp(&ip, &eth);
                 }
             }
             _ => {
@@ -111,7 +94,82 @@ pub fn parse_packet(data: &[u8]) {
     }
 }
 
-fn stat_tcp(eth: &EthernetPacket, connection: &mut Connection, mac: String, payload: &[u8], config: &Config) {
+fn parse_udp(ip: &Ipv4Packet, eth: &EthernetPacket) {
+    if let Some(udp) = UdpPacket::new(ip.payload()) {
+        trace!("UDP:  -> {} {}", udp.get_source(), udp.get_destination());
+
+        let src = format!("{}:{}", ip.get_source(), udp.get_source());
+        let dst = format!("{}:{}", ip.get_destination(), udp.get_destination());
+        let mac = Registry::get::<String>("mac").unwrap();
+        let mut connection_id = format!("{}->{}", dst, src);
+        if eth.get_source().to_string() == mac {
+            connection_id = format!("{}->{}", src, dst);
+        }
+        let mut connection = match Registry::get::<Connection>(&connection_id) {
+            Some(connection) => connection,
+            None => {
+                let connection = Connection::new(connection_id.clone(), "udp".to_string(), src, udp.get_source(), dst, udp.get_destination());
+                Registry::set(connection_id.clone(), connection.clone());
+                connection
+            }
+        };
+        let payload = udp.payload();
+        if eth.get_source().to_string() == mac {
+            if payload.len() == 0 {
+                return;
+            }
+            if payload[0] >> 4 != 0xc {
+                return;
+            }
+            if payload[1..].starts_with(b"\xba\xba\xba\xba".as_slice()) || payload[1..].starts_with(b"\x00\x00\x00\x01".as_slice()) {
+                debug!("payload {}", hex::encode(payload));
+                if let Some(domain) = quic::Quic::new().parse_inital_packet(payload.to_vec()) {
+                    debug!("Domain: {}", domain);
+                    connection.domain = Some(domain);
+                    connection.protocol = "quic".to_string();
+                    Registry::set(connection_id, connection.clone());
+                }
+            }
+        }
+        stat_packet(&eth, &mut connection, payload);
+    }
+}
+
+fn parse_tcp(ip: &Ipv4Packet, eth: &EthernetPacket) {
+    if let Some(tcp) = TcpPacket::new(ip.payload()) {
+        trace!("TCP: {} -> {}", tcp.get_source(), tcp.get_destination());
+        trace!("Flags: {:?}", tcp.get_flags());
+
+        let src = format!("{}:{}", ip.get_source(), tcp.get_source());
+        let dst = format!("{}:{}", ip.get_destination(), tcp.get_destination());
+        let mac = Registry::get::<String>("mac").unwrap();
+        let mut connection_id = format!("{}->{}", dst, src);
+        if eth.get_source().to_string() == mac {
+            connection_id = format!("{}->{}", src, dst);
+        }
+        let mut connection = match Registry::get::<Connection>(&connection_id) {
+            Some(connection) => connection,
+            None => {
+                let connection = Connection::new(connection_id.clone(), "tcp".to_string(), src, tcp.get_source(), dst, tcp.get_destination());
+                Registry::set(connection_id.clone(), connection.clone());
+                connection
+            }
+        };
+        let payload = tcp.payload();
+        
+        if eth.get_source().to_string() == mac {
+            parse_http_and_tls(payload, &mut connection);
+            Registry::set(connection_id, connection.clone());
+        }
+
+        stat_packet(&eth, &mut connection, payload,);
+    }
+}
+
+fn stat_packet(eth: &EthernetPacket, connection: &mut Connection, payload: &[u8]) {
+    let config = Registry::get::<Config>("config").unwrap();
+    let mac = Registry::get::<String>("mac").unwrap();
+
     if eth.get_source().to_string() == mac {
         connection.up_bytes += payload.len() as u64;
     } else if eth.get_destination().to_string() == mac {
@@ -121,21 +179,14 @@ fn stat_tcp(eth: &EthernetPacket, connection: &mut Connection, mac: String, payl
     let mut millis_of_avg: u64 = 1000;
     if connection.now.elapsed() > Duration::from_millis(config.freq) {
         millis_of_avg = connection.now.elapsed().as_millis() as u64;
-        calc_tcp(connection.clone(), config.clone(), millis_of_avg);
+        // calc_packet(connection.clone(), config.clone(), millis_of_avg);
+    } else if !connection.is_init {
+        return;
+        // calc_packet(connection.clone(), config.clone(), millis_of_avg);
+    } 
 
-        connection.up_bytes = 0;
-        connection.down_bytes = 0;
-        connection.now = Instant::now();
-    } else if connection.is_init {
-        calc_tcp(connection.clone(), config.clone(), millis_of_avg);
-        connection.is_init = false;
-    }
-    Registry::set(connection.id.clone(), connection.clone());
-}
-
-fn calc_tcp(connection: Connection, config: Config, millis_of_avg: u64) {
     let upload_sepped = ByteSize(connection.up_bytes * 1000 / millis_of_avg);
-    let download_sepped = ByteSize(connection.up_bytes * 1000 / millis_of_avg);
+    let download_sepped = ByteSize(connection.down_bytes * 1000 / millis_of_avg);
 
     let mut domain_format = "".to_string();
     if let Some(ref domain) = connection.domain {
@@ -147,7 +198,45 @@ fn calc_tcp(connection: Connection, config: Config, millis_of_avg: u64) {
     }
 
     if (!config.has_domain || connection.domain != None) && (upload_sepped.0 > 0 || download_sepped.0 > 0) {
-        info!("connection: {}, {}{}Up: {:?}/s, Down: {:?}/s",
+        connection.is_init = false;
+        connection.now = Instant::now();
+        connection.up_bytes = 0;
+        connection.down_bytes = 0;
+        Registry::set(connection.id.clone(), connection.clone());
+
+        info!("{}: {}, {}{}Up: {:?}/s, Down: {:?}/s",
+            connection.protocol,
+            connection.id,  
+            domain_format,
+            path_format,
+            upload_sepped,
+            download_sepped
+        );
+    }
+}
+
+fn calc_packet(mut connection: Connection, config: Config, millis_of_avg: u64) {
+    let upload_sepped = ByteSize(connection.up_bytes * 1000 / millis_of_avg);
+    let download_sepped = ByteSize(connection.down_bytes * 1000 / millis_of_avg);
+
+    let mut domain_format = "".to_string();
+    if let Some(ref domain) = connection.domain {
+        domain_format += &format!("Domain: {}, ", domain);
+    }
+    let mut path_format = "".to_string();
+    if let Some(ref path) = connection.path {
+        path_format += &format!("Path: {}, ", path);
+    }
+
+    if (!config.has_domain || connection.domain != None) && (upload_sepped.0 > 0 || download_sepped.0 > 0) {
+        connection.is_init = false;
+        connection.now = Instant::now();
+        connection.up_bytes = 0;
+        connection.down_bytes = 0;
+        Registry::set(connection.id.clone(), connection.clone());
+        
+        info!("{}: {}, {}{}Up: {:?}/s, Down: {:?}/s",
+            connection.protocol,
             connection.id,  
             domain_format,
             path_format,
@@ -168,7 +257,6 @@ fn parse_http_and_tls(payload: &[u8], connection: &mut Connection) {
         // 解析
         let status = req.parse(payload).unwrap();
         trace!("status: {:?}", status);
-        
 
         if status.is_complete() {
             let host = req
@@ -180,6 +268,7 @@ fn parse_http_and_tls(payload: &[u8], connection: &mut Connection) {
             debug!("HTTP Method: {}, Host: {}, connection_id: {}", req.method.unwrap(), String::from_utf8_lossy(host.value), connection.id);
             connection.domain = Some(String::from_utf8_lossy(host.value).to_string());
             connection.path = req.path.and_then(|path| Some(path.to_string()));
+            connection.protocol = "http".to_string();
         }
     } else if payload.starts_with(b"\x16\x03".as_slice()) || payload.starts_with(b"\x17\x03".as_slice()) { // TLS 握手
         trace!("TLS Record: {}", hex::encode(payload));

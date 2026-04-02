@@ -54,6 +54,7 @@ pub fn parse_extensions(data: &[u8], connection: &mut Connection)  {
             for (sni_type, sni_value) in snis {
                 debug!("HTTPS server_name: {}, connection_id: {}", String::from_utf8_lossy(sni_value), connection.id);
                 connection.domain = Some(String::from_utf8_lossy(sni_value).to_string());
+                connection.protocol = "https".to_string();
             }
         }
     }
