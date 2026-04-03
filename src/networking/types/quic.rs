@@ -1,9 +1,9 @@
-use tracing::{debug, info, trace, warn};
+use tracing::{debug, trace, warn};
 use hmac_sha256::HKDF;
 use aes::cipher::{KeyIvInit, StreamCipher};
-use aes::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyInit};
+use aes::cipher::{block_padding::Pkcs7,  BlockEncryptMut, KeyInit};
 use aes::Aes128;
-use ecb::{Decryptor, Encryptor};
+use ecb::{Encryptor};
 use ctr::Ctr128BE;
 use crate::networking::types::packet;
 use crate::utils::registry::Registry;
@@ -31,19 +31,19 @@ impl Quic {
         Self::default()
     }
 
-    pub fn get_payload(&mut self, data: Vec<u8>) -> Vec<u8> {
+    pub fn get_payload(&mut self, data: Vec<u8>) -> Option<Vec<u8>> {
         let mut packet = packet::Packet::new(data);
         let flag = packet.read_u8();
         let mut packet_no_length = flag & 0x0f;
-        let version = packet.read_u32();
+        let _version = packet.read_u32();
         let dst_conn_length = packet.read_u8();
         debug!("DstConnLength: {}", dst_conn_length);
         self.dst_conn_id = packet.read_bytes(dst_conn_length as usize);
         debug!("DstConnId: {}", hex::encode(self.dst_conn_id.clone()));
         let src_conn_length = packet.read_u8();
-        let src_conn_id = packet.read_bytes(src_conn_length as usize);
+        let _src_conn_id = packet.read_bytes(src_conn_length as usize);
         let token_length = packet.read_u8();
-        let token = packet.read_bytes(token_length as usize);
+        let _token = packet.read_bytes(token_length as usize);
         let mut packet_length = packet.read_u16();
         packet_length &= 0x7ff;
         debug!("PacketLength: {}", packet_length);
@@ -69,10 +69,13 @@ impl Quic {
         debug!("PacketNo: {}", hex::encode(packet_no_bytes.clone()));
         self.packet_number = u32::from_be_bytes(packet_no_bytes);
         debug!("packet_number: {}", self.packet_number);
-
+        if self.packet_number >= 2 { // packet number 从0开始，比较小的包应该就够用，不会太大，暂时将大于2的忽略
+            return None;
+        }
+        
         let encrypted_packet = packet.read_bytes(packet_length as usize);
         debug!("EncryptedPacket: {}", hex::encode(encrypted_packet.clone()));
-        encrypted_packet
+        Some(encrypted_packet)
     }
 
     pub fn get_hp_mask(&mut self, sample: Vec<u8>) -> Vec<u8> {
@@ -109,10 +112,11 @@ impl Quic {
 
     pub fn parse_inital_packet(&mut self, data: Vec<u8>) -> Option<String> {
         let encrypted_packet = self.get_payload(data);
-        if self.packet_number >= 2 { // packet number 从0开始，比较小的包应该就够用，不会太大，暂时将大于2的忽略
+        if encrypted_packet == None {
             return None;
         }
-        let mut plaintext = self.gcm_ctr_decrypt(encrypted_packet);
+        let encrypted_packet = encrypted_packet.unwrap();
+        let plaintext = self.gcm_ctr_decrypt(encrypted_packet);
 
         debug!("plaintext: {}", hex::encode(plaintext.clone()));
         let mut packet = packet::Packet::new(plaintext);
@@ -172,7 +176,7 @@ impl Quic {
             Registry::remove(key);
             return self.parse_ext_domain(reassembled_packet);
         } else {
-            Registry::set(key, crypto_list);
+            Registry::set(key, crypto_list, None);
         }
 
         None
@@ -211,18 +215,18 @@ impl Quic {
 
     fn parse_ext_domain(&mut self, data: Vec<u8>) -> Option<String> {
         let mut packet = packet::Packet::new(data);
-        let msg_type = packet.read_u8();
-        let len = (packet.read_u16() as usize) << 8
+        let _msg_type = packet.read_u8();
+        let _len = (packet.read_u16() as usize) << 8
             | (packet.read_u8() as usize);
-        let legacy_version = packet.read_u16();
-        let random = packet.read_bytes(32);
+        let _legacy_version = packet.read_u16();
+        let _random = packet.read_bytes(32);
 
         let sid_len = packet.read_u8() as usize;
-        let session = packet.read_bytes(sid_len);
+        let _session = packet.read_bytes(sid_len);
         let cs_len = packet.read_u16() as usize;
-        let cipher_suites = packet.read_bytes(cs_len);
+        let _cipher_suites = packet.read_bytes(cs_len);
         let comp_len = packet.read_u8() as usize;
-        let compression_methods = packet.read_bytes(comp_len);
+        let _compression_methods = packet.read_bytes(comp_len);
         let ext_len = packet.read_u16() as usize;
         let ext = packet.read_bytes(ext_len);
 

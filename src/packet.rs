@@ -12,11 +12,13 @@ use crate::networking::types::quic;
 use crate::networking::types::tls::{parse_client_hello, TlsPacket};
 use crate::utils::registry::Registry;
 
+#[allow(dead_code)]
 pub struct PacketOwned {
     pub header: PacketHeader,
     pub data: Box<[u8]>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Connection {
     pub id: String,
@@ -84,7 +86,7 @@ pub fn parse_packet(data: &[u8]) {
                     // 解析 UDP 层
                     parse_udp(&ip, &eth);
                     // 解析 TCP 层
-                    // parse_tcp(&ip, &eth);
+                    parse_tcp(&ip, &eth);
                 }
             }
             _ => {
@@ -109,7 +111,7 @@ fn parse_udp(ip: &Ipv4Packet, eth: &EthernetPacket) {
             Some(connection) => connection,
             None => {
                 let connection = Connection::new(connection_id.clone(), "udp".to_string(), src, udp.get_source(), dst, udp.get_destination());
-                Registry::set(connection_id.clone(), connection.clone());
+                Registry::set(connection_id.clone(), connection.clone(), None);
                 connection
             }
         };
@@ -127,7 +129,7 @@ fn parse_udp(ip: &Ipv4Packet, eth: &EthernetPacket) {
                     debug!("Domain: {}", domain);
                     connection.domain = Some(domain);
                     connection.protocol = "quic".to_string();
-                    Registry::set(connection_id, connection.clone());
+                    Registry::set(connection_id, connection.clone(), None);
                 }
             }
         }
@@ -151,15 +153,15 @@ fn parse_tcp(ip: &Ipv4Packet, eth: &EthernetPacket) {
             Some(connection) => connection,
             None => {
                 let connection = Connection::new(connection_id.clone(), "tcp".to_string(), src, tcp.get_source(), dst, tcp.get_destination());
-                Registry::set(connection_id.clone(), connection.clone());
+                Registry::set(connection_id.clone(), connection.clone(), None);
                 connection
             }
         };
         let payload = tcp.payload();
-        
+
         if eth.get_source().to_string() == mac {
             parse_http_and_tls(payload, &mut connection);
-            Registry::set(connection_id, connection.clone());
+            Registry::set(connection_id, connection.clone(), None);
         }
 
         stat_packet(&eth, &mut connection, payload,);
@@ -183,7 +185,7 @@ fn stat_packet(eth: &EthernetPacket, connection: &mut Connection, payload: &[u8]
     } else if !connection.is_init {
         return;
         // calc_packet(connection.clone(), config.clone(), millis_of_avg);
-    } 
+    }
 
     let upload_sepped = ByteSize(connection.up_bytes * 1000 / millis_of_avg);
     let download_sepped = ByteSize(connection.down_bytes * 1000 / millis_of_avg);
@@ -202,42 +204,11 @@ fn stat_packet(eth: &EthernetPacket, connection: &mut Connection, payload: &[u8]
         connection.now = Instant::now();
         connection.up_bytes = 0;
         connection.down_bytes = 0;
-        Registry::set(connection.id.clone(), connection.clone());
+        Registry::set(connection.id.clone(), connection.clone(), None);
 
         info!("{}: {}, {}{}Up: {:?}/s, Down: {:?}/s",
             connection.protocol,
-            connection.id,  
-            domain_format,
-            path_format,
-            upload_sepped,
-            download_sepped
-        );
-    }
-}
-
-fn calc_packet(mut connection: Connection, config: Config, millis_of_avg: u64) {
-    let upload_sepped = ByteSize(connection.up_bytes * 1000 / millis_of_avg);
-    let download_sepped = ByteSize(connection.down_bytes * 1000 / millis_of_avg);
-
-    let mut domain_format = "".to_string();
-    if let Some(ref domain) = connection.domain {
-        domain_format += &format!("Domain: {}, ", domain);
-    }
-    let mut path_format = "".to_string();
-    if let Some(ref path) = connection.path {
-        path_format += &format!("Path: {}, ", path);
-    }
-
-    if (!config.has_domain || connection.domain != None) && (upload_sepped.0 > 0 || download_sepped.0 > 0) {
-        connection.is_init = false;
-        connection.now = Instant::now();
-        connection.up_bytes = 0;
-        connection.down_bytes = 0;
-        Registry::set(connection.id.clone(), connection.clone());
-        
-        info!("{}: {}, {}{}Up: {:?}/s, Down: {:?}/s",
-            connection.protocol,
-            connection.id,  
+            connection.id,
             domain_format,
             path_format,
             upload_sepped,
@@ -275,13 +246,13 @@ fn parse_http_and_tls(payload: &[u8], connection: &mut Connection) {
         let len = u16::from_be_bytes(payload[3..5].try_into().unwrap()) + 5;
         trace!("TLS len: {}", len);
         if len < payload.len() as u16 {
-            parse_client_hello(payload, connection);
+            let _ = parse_client_hello(payload, connection);
         } else {
             let packet_key = "tls_packet_".to_string() + connection.id.as_str();
             Registry::set(packet_key, TlsPacket{
                 len,
                 data: payload.to_vec(),
-            });
+            }, None);
         }
     } else {
         trace!("Payload: {:?}", hex::encode(payload));
@@ -291,12 +262,12 @@ fn parse_http_and_tls(payload: &[u8], connection: &mut Connection) {
             tls_payload.extend(payload.to_vec());
             if tls_payload.len() as u16 >= tls_packet.len {
                 Registry::remove(packet_key);
-                parse_client_hello(&tls_payload[..tls_payload.len()], connection);
+                let _ = parse_client_hello(&tls_payload[..tls_payload.len()], connection);
             } else {
                 Registry::set(packet_key, TlsPacket{
                     len: tls_packet.len,
                     data: tls_payload,
-                });
+                }, None);
             }
         }
     }

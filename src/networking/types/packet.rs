@@ -4,6 +4,7 @@ pub struct Packet {
     cursor: Cursor<Vec<u8>>,
 }
 
+#[allow(dead_code)]
 impl Packet {
     pub fn new(data: Vec<u8>) -> Self {
         Self {
@@ -61,6 +62,6 @@ impl Packet {
     }
     
     pub fn revert(&mut self, len: i64) {
-        self.cursor.seek(SeekFrom::Current(-len));
+        let _ = self.cursor.seek(SeekFrom::Current(-len));
     }
 }

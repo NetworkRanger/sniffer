@@ -1,14 +1,10 @@
-use pnet::packet::ip::IpNextHeaderProtocols::St;
 use tls_parser::{
-    TlsClientHelloContents, TlsExtension, TlsMessage, TlsMessageHandshake, parse_tls_extension_sni,
+    TlsExtension, TlsMessage, TlsMessageHandshake,
     parse_tls_plaintext,
 };
-use tracing::{info, trace};
+use tracing::{trace};
 use tracing::debug;
-use tracing::warn;
-use tracing_subscriber::fmt::format;
 use crate::packet::Connection;
-use crate::utils::registry::Registry;
 
 #[derive(Debug, Clone)]
 pub struct TlsPacket {
@@ -35,7 +31,7 @@ pub fn parse_client_hello(data: &[u8], connection: &mut Connection) -> Result<()
                 }
             }
         }
-        Err(e) => {
+        Err(_e) => {
             // warn!("parse_tls_plaintext error: {}", e);
             // warn!("data: {:?}", hex::encode(data));
         },
@@ -51,7 +47,7 @@ pub fn parse_extensions(data: &[u8], connection: &mut Connection)  {
 
     for ext in extensions {
         if let TlsExtension::SNI(snis) = ext {
-            for (sni_type, sni_value) in snis {
+            for (_sni_type, sni_value) in snis {
                 debug!("HTTPS server_name: {}, connection_id: {}", String::from_utf8_lossy(sni_value), connection.id);
                 connection.domain = Some(String::from_utf8_lossy(sni_value).to_string());
                 connection.protocol = "https".to_string();

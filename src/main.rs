@@ -1,15 +1,11 @@
-use pcap::{Active, Capture, Device, PacketHeader};
-use pnet::packet::Packet;
-use pnet::packet::ethernet::{EtherTypes, EthernetPacket};
-use pnet::packet::ipv4::Ipv4Packet;
-use pnet::packet::tcp::TcpPacket;
-use std::io::Read;
-use std::thread;
+use pcap::{Capture, Device};
+use pnet::packet::ethernet::{EthernetPacket};
+use std::{panic, thread};
 use std::time::{Duration, Instant};
-use tracing::{debug, info};
-use serde::{Deserialize, Serialize};
-use tokio::sync::broadcast::Receiver;
+use tracing::{error, info};
 use bytesize::ByteSize;
+use tracing_subscriber::fmt::time::OffsetTime;
+use time::macros::{format_description, offset};
 
 mod utils;
 mod networking;
@@ -22,9 +18,21 @@ use crate::config::Config;
 
 
 fn main() {
-    tracing_subscriber::fmt::init();
+    // 定义时间格式（年-月-日T时:分:秒.毫秒）
+    let time_fmt = format_description!(
+        "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]"
+    );
+
+    // 构造一个偏移 +8:00（北京时间）的时间格式器
+    let timer = OffsetTime::new(offset!(+8:00), time_fmt);
+
+    // 安装 tracing-subscriber，并用自定义时间格式
+    tracing_subscriber::fmt()
+        .with_timer(timer)
+        .init();
+
     let config = Config::new();
-    Registry::set("config", config.clone());
+    Registry::set("config", config.clone(), Some(0u64));
 
     let device_list = Device::list().expect("device list failed");
 
@@ -38,7 +46,7 @@ fn main() {
     info!("Using device: {}", device.name);
     let mac = get_mac_by_name(device.name.as_str()).unwrap();
     info!("Using device mac {}", get_mac_by_name(device.name.as_str()).unwrap());
-    Registry::set("mac", mac.clone());
+    Registry::set("mac", mac.clone(), Some(0u64));
 
     // 配置捕获
     let cap = Capture::from_device(device.clone())
@@ -65,7 +73,7 @@ fn main() {
             .unwrap_or((Err(pcap::Error::TimeoutExpired), None));
        
         match packet_res {
-            Err(e) => {}
+            Err(_e) => {}
             Ok(packet) => {
                 if let Some(eth) = EthernetPacket::new(&packet.data) {
                     if eth.get_source().to_string() == mac {
@@ -94,8 +102,13 @@ fn main() {
                     packet_count = 0;
                     now = Instant::now();
                 }
-                
-                packet::parse_packet(&packet.data);
+
+                let result = panic::catch_unwind(|| {
+                    packet::parse_packet(&packet.data);
+                });
+                if result.is_err() {
+                    error!("packet parse error: {:?}", result);
+                }
             }
         }
     }
