@@ -20,7 +20,7 @@ pcap = "2.4.0"
 pnet = "0.28.0"
 pnet_datalink = "0.35.0"
 tracing = "0.1.44"
-tracing-subscriber = {version = "0.3.23", features = ["time"]}
+tracing-subscriber = {version = "0.3.23", features = ["time", "env-filter"] }
 tokio = { version = "1.50.0", features = ["macros", "fs", "sync"] }
 serde = { version = "1.0.228", features = ["derive"] }
 httparse = "1.10.1"

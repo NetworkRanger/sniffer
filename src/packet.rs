@@ -83,10 +83,10 @@ pub fn parse_packet(data: &[u8]) {
                 if let Some(ip) = Ipv4Packet::new(eth.payload()) {
                     trace!("IPv4: {} -> {}", ip.get_source(), ip.get_destination());
 
-                    // 解析 UDP 层
-                    parse_udp(&ip, &eth);
                     // 解析 TCP 层
                     parse_tcp(&ip, &eth);
+                    // 解析 UDP 层
+                    parse_udp(&ip, &eth);
                 }
             }
             _ => {
@@ -149,6 +149,7 @@ fn parse_tcp(ip: &Ipv4Packet, eth: &EthernetPacket) {
         if eth.get_source().to_string() == mac {
             connection_id = format!("{}->{}", src, dst);
         }
+        trace!("connection_id: {}", connection_id);
         let mut connection = match Registry::get::<Connection>(&connection_id) {
             Some(connection) => connection,
             None => {
@@ -159,6 +160,7 @@ fn parse_tcp(ip: &Ipv4Packet, eth: &EthernetPacket) {
         };
         let payload = tcp.payload();
 
+        trace!("source: {:?}, mac: {:?}", eth.get_source(), mac);
         if eth.get_source().to_string() == mac {
             parse_http_and_tls(payload, &mut connection);
             Registry::set(connection_id, connection.clone(), None);
@@ -177,27 +179,17 @@ fn stat_packet(eth: &EthernetPacket, connection: &mut Connection, payload: &[u8]
     } else if eth.get_destination().to_string() == mac {
         connection.down_bytes += payload.len() as u64;
     }
+    Registry::set(connection.id.clone(), connection.clone(), None);
 
     let mut millis_of_avg: u64 = 1000;
     if connection.now.elapsed() > Duration::from_millis(config.freq) {
         millis_of_avg = connection.now.elapsed().as_millis() as u64;
-        // calc_packet(connection.clone(), config.clone(), millis_of_avg);
     } else if !connection.is_init {
         return;
-        // calc_packet(connection.clone(), config.clone(), millis_of_avg);
     }
 
     let upload_sepped = ByteSize(connection.up_bytes * 1000 / millis_of_avg);
     let download_sepped = ByteSize(connection.down_bytes * 1000 / millis_of_avg);
-
-    let mut domain_format = "".to_string();
-    if let Some(ref domain) = connection.domain {
-        domain_format += &format!("Domain: {}, ", domain);
-    }
-    let mut path_format = "".to_string();
-    if let Some(ref path) = connection.path {
-        path_format += &format!("Path: {}, ", path);
-    }
 
     if (!config.has_domain || connection.domain != None) && (upload_sepped.0 > 0 || download_sepped.0 > 0) {
         connection.is_init = false;
@@ -205,6 +197,15 @@ fn stat_packet(eth: &EthernetPacket, connection: &mut Connection, payload: &[u8]
         connection.up_bytes = 0;
         connection.down_bytes = 0;
         Registry::set(connection.id.clone(), connection.clone(), None);
+
+        let mut domain_format = "".to_string();
+        if let Some(ref domain) = connection.domain {
+            domain_format += &format!("Domain: {}, ", domain);
+        }
+        let mut path_format = "".to_string();
+        if let Some(ref path) = connection.path {
+            path_format += &format!("Path: {}, ", path);
+        }
 
         info!("{}: {}, {}{}Up: {:?}/s, Down: {:?}/s",
             connection.protocol,
@@ -245,7 +246,7 @@ fn parse_http_and_tls(payload: &[u8], connection: &mut Connection) {
         trace!("TLS Record: {}", hex::encode(payload));
         let len = u16::from_be_bytes(payload[3..5].try_into().unwrap()) + 5;
         trace!("TLS len: {}", len);
-        if len < payload.len() as u16 {
+        if len <= payload.len() as u16 {
             let _ = parse_client_hello(payload, connection);
         } else {
             let packet_key = "tls_packet_".to_string() + connection.id.as_str();

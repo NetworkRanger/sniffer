@@ -28,6 +28,7 @@ fn main() {
 
     // 安装 tracing-subscriber，并用自定义时间格式
     tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .with_timer(timer)
         .init();
 
@@ -102,7 +103,7 @@ fn main() {
                     packet_count = 0;
                     now = Instant::now();
                 }
-
+                
                 let result = panic::catch_unwind(|| {
                     packet::parse_packet(&packet.data);
                 });
