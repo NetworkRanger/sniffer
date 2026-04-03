@@ -21,8 +21,7 @@ pnet = "0.28.0"
 pnet_datalink = "0.35.0"
 tracing = "0.1.44"
 tracing-subscriber = {version = "0.3.23", features = ["time", "env-filter"] }
-tokio = { version = "1.50.0", features = ["macros", "fs", "sync"] }
-serde = { version = "1.0.228", features = ["derive"] }
+enum_primitive = "0.1.1"
 httparse = "1.10.1"
 tls-parser = "0.12.2"
 hex = "0.4.3"
@@ -34,3 +33,5 @@ ctr = "0.9"
 ecb = "0.1"# 使用 cipher 0.4（与 aes 0.8 兼容）
 cipher = "0.4"
 time = {version = "0.3.47", features = ["macros"]}
+hpack_codec = "0.1.1"
+log = "0.4.29"

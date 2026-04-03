@@ -232,7 +232,7 @@ impl Quic {
 
         let mut ext_packet = packet::Packet::new(ext);
 
-        while !ext_packet.is_empty() {
+        while !ext_packet.is_end() {
             let ext_type = ext_packet.read_u16();
             let ext_l = ext_packet.read_u16() as usize;
             let ext_data = ext_packet.read_bytes(ext_l);

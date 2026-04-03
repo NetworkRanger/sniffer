@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use bytesize::ByteSize;
 use pcap::{Active, Capture, PacketHeader};
@@ -8,7 +9,8 @@ use pnet::packet::tcp::TcpPacket;
 use pnet::packet::udp::UdpPacket;
 use tracing::{debug, info, trace};
 use crate::config::Config;
-use crate::networking::types::quic;
+use crate::networking::types::{quic};
+use crate::networking::types::h2c::H2c;
 use crate::networking::types::tls::{parse_client_hello, TlsPacket};
 use crate::utils::registry::Registry;
 
@@ -219,6 +221,7 @@ fn stat_packet(eth: &EthernetPacket, connection: &mut Connection, payload: &[u8]
 }
 
 fn parse_http_and_tls(payload: &[u8], connection: &mut Connection) {
+    let conn_preface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".to_string();
     if payload.starts_with(b"GET".as_slice())
         || payload.starts_with(b"POST".as_slice()) {   // 解析 HTTP 层
 
@@ -255,6 +258,14 @@ fn parse_http_and_tls(payload: &[u8], connection: &mut Connection) {
                 data: payload.to_vec(),
             }, None);
         }
+    } else if payload.starts_with(conn_preface.as_bytes()){ // h2c
+        let mut h2c = H2c::new();
+        if let Some(headers) = h2c.parse_headers(payload[conn_preface.as_bytes().len()..].to_vec()) {
+            set_h2c_connection(connection, headers);
+        } else {
+            let packet_key = "h2c_packet_".to_string() + connection.id.as_str();
+            Registry::set(packet_key, 0, None);
+        }
     } else {
         trace!("Payload: {:?}", hex::encode(payload));
         let packet_key = "tls_packet_".to_string() + connection.id.as_str();
@@ -271,5 +282,27 @@ fn parse_http_and_tls(payload: &[u8], connection: &mut Connection) {
                 }, None);
             }
         }
+        let packet_key = "h2c_packet_".to_string() + connection.id.as_str();
+        if let Some(_) = Registry::get::<i32>(packet_key.clone()){
+            let mut h2c = H2c::new();
+            if let Some(headers) = h2c.parse_headers(payload.to_vec()) {
+                set_h2c_connection(connection, headers);
+                Registry::remove(packet_key);
+            }
+        } 
     }
+}
+
+pub fn set_h2c_connection(connection: &mut Connection, headers: HashMap<String, String>) {
+    connection.protocol = "h2c".to_string();
+    if let Some(domain) = headers.get(":authority"){
+        connection.domain = Some(domain.to_string());
+        connection.is_init = true;
+    }
+    if let Some(domain) = headers.get(":path"){
+        connection.path = Some(domain.to_string());
+        connection.is_init = true;
+    }
+    debug!("connection: {:?}", connection);
+    Registry::set(connection.id.clone(), connection.clone(), None);
 }

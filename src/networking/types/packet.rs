@@ -12,8 +12,8 @@ impl Packet {
         }
     }
     
-    pub fn is_empty(&self) -> bool{
-        self.cursor.get_ref().is_empty()
+    pub fn len(&self) -> usize {
+        self.cursor.get_ref().len()
     }
     
     pub fn is_end(&self) -> bool {
@@ -26,6 +26,12 @@ impl Packet {
     
     pub fn read_u16(&mut self) -> u16 {
         u16::from_be_bytes(self.read_bytes(2).try_into().unwrap())
+    }
+    
+    pub fn read_h2c_length(&mut self) -> u32 {
+        let high = self.read_u8();
+        let low = self.read_u16();
+        ((high as u32) << 16) | low as u32
     }
     
     pub fn read_u32(&mut self) -> u32 {

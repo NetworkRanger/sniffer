@@ -11,6 +11,8 @@ mod utils;
 mod networking;
 mod packet;
 mod config;
+#[macro_use]
+extern crate enum_primitive;
 
 use crate::utils::get_mac_by_name;
 use crate::utils::registry::Registry;
