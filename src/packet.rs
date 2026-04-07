@@ -4,10 +4,11 @@ use bytesize::ByteSize;
 use pcap::{Active, Capture, PacketHeader};
 use pnet::packet::ethernet::{EtherTypes, EthernetPacket};
 use pnet::packet::ipv4::Ipv4Packet;
-pub(crate) use pnet::packet::Packet;
+use pnet::packet::Packet;
 use pnet::packet::tcp::TcpPacket;
 use pnet::packet::udp::UdpPacket;
 use tracing::{debug, info, trace};
+use dns_parser;
 use crate::config::Config;
 use crate::networking::types::{quic};
 use crate::networking::types::h2c::H2c;
@@ -134,8 +135,20 @@ fn parse_udp(ip: &Ipv4Packet, eth: &EthernetPacket) {
                     Registry::set(connection_id, connection.clone(), None);
                 }
             }
+        } else if eth.get_destination().to_string() == mac && udp.get_destination() == 53 {
+            parse_dns(payload);
         }
         stat_packet(&eth, &mut connection, payload);
+    }
+}
+
+fn parse_dns(payload: &[u8]) {
+    if let Ok(dns) = dns_parser::Packet::parse(payload) {
+        for answer in dns.answers {
+            if let dns_parser::RData::A(a) = answer.data {
+                Registry::set("ip:".to_string() +  a.0.to_string().as_str(), answer.name.to_string(), None);
+            }
+        }
     }
 }
 
@@ -192,8 +205,14 @@ fn stat_packet(eth: &EthernetPacket, connection: &mut Connection, payload: &[u8]
 
     let upload_sepped = ByteSize(connection.up_bytes * 1000 / millis_of_avg);
     let download_sepped = ByteSize(connection.down_bytes * 1000 / millis_of_avg);
+    
+    if connection.domain.is_none() {
+        if let Some(domain) = Registry::get::<String>("ip:".to_string() + connection.dst_ip.clone().as_str()) {
+            connection.domain = Some(domain);
+        }
+    }
 
-    if (!config.has_domain || connection.domain != None) && (upload_sepped.0 > 0 || download_sepped.0 > 0) {
+    if (!config.has_domain || connection.domain.is_some()) && (upload_sepped.0 > 0 || download_sepped.0 > 0) {
         connection.is_init = false;
         connection.now = Instant::now();
         connection.up_bytes = 0;

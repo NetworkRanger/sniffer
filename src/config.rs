@@ -8,7 +8,7 @@ pub struct Config {
 impl Config {
     pub fn new() -> Self {
         Self { 
-            freq: 1000,
+            freq: 3000,
             has_domain: true,
         }
     }

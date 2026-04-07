@@ -125,6 +125,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dns-parser"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c4d33be9473d06f75f58220f71f7a9317aca647dc061dbd3c361b0bef505fbea"
+dependencies = [
+ "byteorder",
+ "quick-error",
+]
+
+[[package]]
 name = "ecb"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -637,6 +647,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "quick-error"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a1d01941d82fa2ab50be1e79e6714289dd7cde78eba4c074bc5a4374f650dfe0"
+
+[[package]]
 name = "quote"
 version = "1.0.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -764,31 +780,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
-name = "sinffer"
-version = "0.1.0"
-dependencies = [
- "aes",
- "bytesize",
- "cipher",
- "ctr",
- "ecb",
- "enum_primitive",
- "hex",
- "hmac-sha256",
- "hpack_codec",
- "httparse",
- "log",
- "pcap",
- "pnet",
- "pnet_datalink 0.35.0",
- "ring",
- "time",
- "tls-parser",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "siphasher"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -799,6 +790,31 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+
+[[package]]
+name = "sniffer"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "bytesize",
+ "cipher",
+ "ctr",
+ "dns-parser",
+ "ecb",
+ "enum_primitive",
+ "hex",
+ "hmac-sha256",
+ "hpack_codec",
+ "httparse",
+ "pcap",
+ "pnet",
+ "pnet_datalink 0.35.0",
+ "ring",
+ "time",
+ "tls-parser",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "spin"

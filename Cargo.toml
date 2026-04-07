@@ -1,5 +1,5 @@
 [package]
-name = "sinffer"
+name = "sniffer"
 version = "0.1.0"
 edition = "2024"
 
@@ -34,4 +34,4 @@ ecb = "0.1"# 使用 cipher 0.4（与 aes 0.8 兼容）
 cipher = "0.4"
 time = {version = "0.3.47", features = ["macros"]}
 hpack_codec = "0.1.1"
-log = "0.4.29"
+dns-parser = "0.8.0"

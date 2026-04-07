@@ -6,6 +6,7 @@ use tracing::{error, info};
 use bytesize::ByteSize;
 use tracing_subscriber::fmt::time::OffsetTime;
 use time::macros::{format_description, offset};
+use tracing_subscriber::EnvFilter;
 
 mod utils;
 mod networking;
@@ -30,7 +31,10 @@ fn main() {
 
     // 安装 tracing-subscriber，并用自定义时间格式
     tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| EnvFilter::new("info"))
+        )
         .with_timer(timer)
         .init();
 
