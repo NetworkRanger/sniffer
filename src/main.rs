@@ -46,13 +46,15 @@ fn main() {
     // 查找默认设备
     let device = device_list
         .iter()
-        .filter(|d| d.flags.connection_status == pcap::ConnectionStatus::Connected)
+        .filter(|d| {
+            d.flags.connection_status == pcap::ConnectionStatus::Connected && d.addresses.len() > 0
+        })     
         .next()
         .expect("no device available");
     
     info!("Using device: {}", device.name);
     let mac = get_mac_by_name(device.name.as_str()).unwrap();
-    info!("Using device mac {}", get_mac_by_name(device.name.as_str()).unwrap());
+    info!("Using device mac {}", mac);
     Registry::set("mac", mac.clone(), Some(0u64));
 
     // 配置捕获

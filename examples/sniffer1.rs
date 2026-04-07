@@ -11,8 +11,10 @@ fn main() {
     let device_list = Device::list().expect("device list failed");
 
     // 查找默认设备
-    let device = device_list.iter().
-        filter(|d| d.flags.connection_status == pcap::ConnectionStatus::Connected)
+    let device = device_list.iter()
+        .filter(|d| {
+            d.flags.connection_status == pcap::ConnectionStatus::Connected && d.addresses.len() > 0
+        }) 
         .next().expect("no device available");
     info!("Using device: {}", device.name);
     
