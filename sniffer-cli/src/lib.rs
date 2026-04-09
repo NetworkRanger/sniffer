@@ -8,10 +8,10 @@ use tracing_subscriber::fmt::time::OffsetTime;
 use time::macros::{format_description, offset};
 use tracing_subscriber::EnvFilter;
 
-mod utils;
-mod networking;
-mod packet;
-mod config;
+pub mod utils;
+pub mod networking;
+pub mod packet;
+pub mod config;
 #[macro_use]
 extern crate enum_primitive;
 
@@ -20,7 +20,7 @@ use crate::utils::registry::Registry;
 use crate::config::Config;
 
 
-fn main() {
+pub fn cli_run() {
     // 定义时间格式（年-月-日T时:分:秒.毫秒）
     let time_fmt = format_description!(
         "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]"

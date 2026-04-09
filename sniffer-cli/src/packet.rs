@@ -9,6 +9,7 @@ use pnet::packet::tcp::TcpPacket;
 use pnet::packet::udp::UdpPacket;
 use tracing::{debug, info, trace};
 use dns_parser;
+use serde::{Serialize, Serializer};
 use crate::config::Config;
 use crate::networking::types::{quic};
 use crate::networking::types::h2c::H2c;
@@ -21,8 +22,16 @@ pub struct PacketOwned {
     pub data: Box<[u8]>,
 }
 
+fn serialize_instant<S>(_instant: &Instant, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let formatted = "instant".to_string();
+    serializer.serialize_str(&formatted)
+}
+
 #[allow(dead_code)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Connection {
     pub id: String,
     pub src_ip: String,
@@ -32,7 +41,9 @@ pub struct Connection {
     pub protocol: String,
     pub domain: Option<String>,
     pub path: Option<String>,
+    #[serde(serialize_with = "serialize_instant")]
     pub start: Instant,
+    #[serde(serialize_with = "serialize_instant")]
     pub now: Instant,
     pub up_bytes: u64,
     pub down_bytes: u64,
@@ -99,16 +110,16 @@ pub fn parse_packet(data: &[u8]) {
     }
 }
 
-fn parse_udp(ip: &Ipv4Packet, eth: &EthernetPacket) {
+pub fn parse_udp(ip: &Ipv4Packet, eth: &EthernetPacket) {
     if let Some(udp) = UdpPacket::new(ip.payload()) {
         trace!("UDP:  -> {} {}", udp.get_source(), udp.get_destination());
 
         let src = format!("{}:{}", ip.get_source(), udp.get_source());
         let dst = format!("{}:{}", ip.get_destination(), udp.get_destination());
         let mac = Registry::get::<String>("mac").unwrap();
-        let mut connection_id = format!("{}->{}", dst, src);
+        let mut connection_id = format!("udp://{}@{}", dst, src);
         if eth.get_source().to_string() == mac {
-            connection_id = format!("{}->{}", src, dst);
+            connection_id = format!("udp://{}@{}", src, dst);
         }
         let mut connection = match Registry::get::<Connection>(&connection_id) {
             Some(connection) => connection,
@@ -152,7 +163,7 @@ fn parse_dns(payload: &[u8]) {
     }
 }
 
-fn parse_tcp(ip: &Ipv4Packet, eth: &EthernetPacket) {
+pub fn parse_tcp(ip: &Ipv4Packet, eth: &EthernetPacket) {
     if let Some(tcp) = TcpPacket::new(ip.payload()) {
         trace!("TCP: {} -> {}", tcp.get_source(), tcp.get_destination());
         trace!("Flags: {:?}", tcp.get_flags());
@@ -160,9 +171,9 @@ fn parse_tcp(ip: &Ipv4Packet, eth: &EthernetPacket) {
         let src = format!("{}:{}", ip.get_source(), tcp.get_source());
         let dst = format!("{}:{}", ip.get_destination(), tcp.get_destination());
         let mac = Registry::get::<String>("mac").unwrap();
-        let mut connection_id = format!("{}->{}", dst, src);
+        let mut connection_id = format!("tcp://{}@{}", dst, src);
         if eth.get_source().to_string() == mac {
-            connection_id = format!("{}->{}", src, dst);
+            connection_id = format!("tcp://{}@{}", src, dst);
         }
         trace!("connection_id: {}", connection_id);
         let mut connection = match Registry::get::<Connection>(&connection_id) {
@@ -228,7 +239,7 @@ fn stat_packet(eth: &EthernetPacket, connection: &mut Connection, payload: &[u8]
             path_format += &format!("Path: {}, ", path);
         }
 
-        info!("{}: {}, {}{}Up: {:?}/s, Down: {:?}/s",
+        info!("protocol: {}, {}, {}{}Up: {:?}/s, Down: {:?}/s",
             connection.protocol,
             connection.id,
             domain_format,
