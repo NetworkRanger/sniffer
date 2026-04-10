@@ -44,9 +44,19 @@ pub struct NetworkStats {
     pub download_speed: u64,  // bytes/s
 }
 
+#[derive(Debug, Clone)]
+#[derive(Eq, Hash, PartialEq)]
+pub struct ConnectionKey {
+    pub protocol: String,
+    pub local_addr: String,
+    pub local_port: u16,
+    pub remote_addr: String,
+    pub remote_port: u16,
+}
+
 // 应用状态
 pub struct AppState {
-    pub process_connections: Arc<RwLock<HashMap<String, ProcessConnection>>>,
+    pub process_connections: Arc<RwLock<HashMap<ConnectionKey, ProcessConnection>>>,
     pub connections: Arc<RwLock<HashMap<String, Connection>>>,
     pub stats_history: Arc<RwLock<Vec<NetworkStats>>>,  // 最近5分钟数据
     pub running: Arc<RwLock<bool>>,

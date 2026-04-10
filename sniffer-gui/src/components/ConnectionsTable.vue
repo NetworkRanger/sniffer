@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {computed, nextTick, onMounted, ref, watch} from "vue";
 import {Connection} from "../types/connection.ts";
+import {filesize} from "filesize";
 
 // 定义组件属性
 interface Props {
@@ -16,28 +17,32 @@ const props = defineProps<Props>();
 // 从props获取数据
 const connections = computed(() => props.connections);
 let th_list = ref([
-    "进程名称",
-    "进程ID",
-    "协议",
-    "应用协议",
-    "本地地址",
-    "本地端口",
-    "远程地址",
-    "远程端口",
-    "状态",
-    "域名",
-    "路径",
-    "上传",
-    "下载",
-    "启动时间",
+  "进程名称",
+  "进程ID",
+  "协议",
+  "应用协议",
+  "本地地址",
+  "本地端口",
+  "远程地址",
+  "远程端口",
+  "状态",
+  "域名",
+  "路径",
+  "总量",
+  "上传",
+  "下载",
+  "活跃时间",
 ]);
 
 // 定义事件发射器
 interface Emits {
   (e: "update:clickedConnection", value: Connection): void;
+
   // (e: "toggleSort", column: SortColumn | 'start_time'): void;
   (e: "showContextMenuHandler", conn: Connection, event: MouseEvent): void;
+
   (e: "showProcessDetailsDialog", conn: Connection): void;
+
   (e: "update:customColumnWidths", value: Record<string, number>): void;
 }
 
@@ -48,6 +53,14 @@ let isDragging = false;
 let dragStartX = 0;
 let dragStartWidth = 0;
 let currentColumnIndex = -1;
+
+const bytesize = (bytes: number) => {
+  return filesize(bytes, {
+    base: 2,
+    standard: "jedec",
+    round: 1
+  }).replace(" ", "");
+}
 
 const startColumnResize = (event: MouseEvent, columnIndex: number) => {
   // 检查是否在右边框区域（10像素范围内）
@@ -148,12 +161,13 @@ const handleColumnResize = (event: MouseEvent) => {
       "status",
       "domain",
       "path",
+      "total",
       "upload_speed",
       "download_speed",
       "start_time",
     ];
     if (columnOrder[currentColumnIndex]) {
-      const updatedWidths = { ...props.customColumnWidths };
+      const updatedWidths = {...props.customColumnWidths};
       updatedWidths[columnOrder[currentColumnIndex]] = newWidth;
       emit('update:customColumnWidths', updatedWidths);
     }
@@ -239,19 +253,20 @@ const applyCustomColumnWidths = () => {
         } else {
           // 使用默认宽度
           let defaultWidth: any = {
-            process_name: 150,
+            process_name: 120,
             pid: 50,
             protocol: 50,
             app_protocol: 50,
-            local_addr: 150,
+            local_addr: 90,
             local_port: 50,
-            remote_addr: 150,
+            remote_addr: 90,
             remote_port: 50,
             status: 50,
-            domain: 150,
-            path: 150,
-            upload_speed: 100,
-            download_speed: 100,
+            domain: 200,
+            path: 50,
+            total: 50,
+            upload_speed: 80,
+            download_speed: 80,
             start_time: 130,
           };
 
@@ -326,26 +341,26 @@ watch(customColumnWidths, () => {
   nextTick(() => {
     applyCustomColumnWidths();
   });
-}, { deep: true });
+}, {deep: true});
 </script>
 
 <template>
   <div class="connections-table-container">
     <table class="connections-table">
       <thead>
-        <tr>
-          <th class="resizable-th" v-for="(item, index) in th_list"
+      <tr>
+        <th class="resizable-th" v-for="(item, index) in th_list"
             @mousedown="startColumnResize($event, index)">
-            <div class="column-header">
+          <div class="column-header">
               <span class="sortable-header">
                 {{ item }}
                 <span class="sort-indicator">
                   {{ true ? " ▲" : " ▼" }}
                 </span>
               </span>
-            </div>
-          </th>
-        </tr>
+          </div>
+        </th>
+      </tr>
       </thead>
       <tbody>
       <tr
@@ -372,9 +387,10 @@ watch(customColumnWidths, () => {
         <td>{{ conn.status }}</td>
         <td>{{ conn.packet_connection?.domain || '-' }}</td>
         <td>{{ conn.packet_connection?.path || '-' }}</td>
-        <td>{{ conn.upload_speed }}</td>
-        <td>{{ conn.download_speed }}</td>
-        <td>{{ formatDate(conn.start_time) }}</td>
+        <td>{{ bytesize(conn.bytes_sent + conn.bytes_recv) }}</td>
+        <td>{{ bytesize(conn.upload_speed) }}/s</td>
+        <td>{{ bytesize(conn.download_speed) }}/s</td>
+        <td>{{ formatDate(conn.last_active) }}</td>
       </tr>
       </tbody>
     </table>

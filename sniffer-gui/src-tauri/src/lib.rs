@@ -21,6 +21,7 @@ use tokio::runtime::Runtime;
 use tracing::info;
 use tracing_subscriber::{EnvFilter};
 use sniffer::config::Config;
+use crate::process_connection::get_process_connections;
 
 #[tauri::command]
 async fn get_network_stats(state: State<'_, Arc<AppState>>) -> Result<NetworkStats, String> {
@@ -36,14 +37,30 @@ async fn get_connections(
     limit: Option<usize>,
 ) -> Result<Vec<Connection>, String> {
     let conns = state.connections.read().await;
-    let mut list: Vec<Connection> = conns.values().cloned().collect();
+    let mut list: Vec<Connection> = conns.values().cloned().into_iter()
+        // .filter(|conn| {
+        //     // conn.clone().process_connection.is_some()  &&
+        //         conn.clone().packet_connection.is_some_and(| packet_connection|
+        //         packet_connection.domain.is_some()
+        //     )
+        // })
+        .collect();
 
     // 按最后活跃时间排序
-    list.sort_by(|a, b| b.download_speed.cmp(&a.download_speed));
+    list.sort_by(|a, b| {
+        let total_a = a.upload_speed + a.download_speed;
+        let total_b = b.upload_speed + b.download_speed;
+        let order = total_b.cmp(&total_a); // 降序
+        if order.is_eq() {
+            return b.last_active.cmp(&a.last_active);
+        }
+        order
+    });
 
-    let limit = limit.unwrap_or(20);
+    let limit = limit.unwrap_or(50);
     let result: Vec<Connection> = list.into_iter().take(limit).collect();
     info!("result len: {}", result.len());
+
     Ok(result)
 }
 
@@ -137,6 +154,7 @@ pub fn run() {
         let rt = Runtime::new().unwrap();
         // 阻塞等待异步完成
         let _result = rt.block_on(async move {
+            let _ = get_process_connections(&state_clone).await.unwrap();
             let _ = start_capture(device.name.clone(), state_clone).await;
         });
     });

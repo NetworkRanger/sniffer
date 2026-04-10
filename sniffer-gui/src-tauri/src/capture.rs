@@ -58,7 +58,6 @@ impl CaptureEngine {
                     if result.is_err() {
                         error!("packet parse error: {:?}", result);
                     }
-                    
                 }
                 Err(e) => eprintln!("Capture error: {}", e),
             }
@@ -84,35 +83,42 @@ fn parse_packet(packet: &[u8]) -> Option<PacketInfo> {
             let ipv4 = Ipv4Packet::new(eth.payload())?;
             let src_ip = ipv4.get_source().to_string();
             let dst_ip = ipv4.get_destination().to_string();
-            let length = ipv4.get_total_length() as u32;
 
-            let ip = Registry::get::<String>("ip").unwrap();
-            let is_outgoing = ip == src_ip;
+            let mac = Registry::get::<String>("mac").unwrap();
+            let is_outgoing = eth.get_source().to_string() == mac;
 
             match ipv4.get_next_level_protocol() {
                 pnet::packet::ip::IpNextHeaderProtocols::Tcp => {
                     let tcp = TcpPacket::new(ipv4.payload())?;
-                    debug!("tcp payload: {}", tcp.payload().len());
+                    let length = tcp.payload().len() as u32;
+                    debug!("tcp payload len: {}", length);
+                    if length == 0 {
+                        return None
+                    }
                     Some(PacketInfo {
                         src_ip,
                         src_port: tcp.get_source(),
                         dst_ip,
                         dst_port: tcp.get_destination(),
                         protocol: "TCP".to_string(),
-                        length: length - 20, // 减去 IP 头
+                        length: length,
                         is_outgoing,
                     })
                 }
                 pnet::packet::ip::IpNextHeaderProtocols::Udp => {
                     let udp = UdpPacket::new(ipv4.payload())?;
-                    debug!("udp payload: {}", udp.payload().len());
+                    let length = udp.payload().len() as u32;
+                    debug!("udp payload: {}", length);
+                    if length == 0 {
+                        return None;
+                    }
                     Some(PacketInfo {
                         src_ip,
                         src_port: udp.get_source(),
                         dst_ip,
                         dst_port: udp.get_destination(),
                         protocol: "UDP".to_string(),
-                        length: udp.get_length() as u32 - 8,
+                        length: length,
                         is_outgoing,
                     })
                 }

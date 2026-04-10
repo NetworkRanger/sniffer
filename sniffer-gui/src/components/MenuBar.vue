@@ -1,10 +1,55 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import { useI18n } from "vue-i18n";
+
+let {t} = useI18n();
+
+// 定义组件属性
+interface Props {
+  // filterProtocol: "all" | "TCP" | "UDP";
+  // filterState: string;
+  // searchProcessName: string;
+  // searchLocalPort: string;
+  isAutoRefreshEnabled: boolean;
+  selectedRefreshInterval: number;
+  refreshIntervals: number[];
+  // isDarkMode: boolean;
+}
+
+defineProps<Props>();
+
+// 定义事件发射器
+interface Emits {
+  (e: "update:filterProtocol", value: "all" | "TCP" | "UDP"): void;
+  (e: "update:filterState", value: string): void;
+  (e: "update:searchProcessName", value: string): void;
+  (e: "update:searchLocalPort", value: string): void;
+  (e: "applyFiltersAndSearch"): void;
+  (e: "toggleAutoRefresh"): void;
+  (e: "changeRefreshInterval", interval: number): void;
+  (e: "update:selectedRefreshInterval", value: number): void;
+  (e: "changeLanguage", lang: "zh" | "en"): void;
+  (e: "toggleTheme"): void;
+  (e: "setProtocolFilter", protocol: "all" | "TCP" | "UDP"): void;
+  (e: "showAboutDialog"): void;
+}
+
+const emit = defineEmits<Emits>();
 
 const protocols = ref([
    "ALL", "TCP", "UDP", "HTTP", "HTTPS", "DNS",
 ]);
 const protocol = ref("ALL");
+
+const toggleAutoRefresh = () => {
+  emit('toggleAutoRefresh');
+};
+const handleRefreshIntervalChange = (event: Event) => {
+  const target = event.target as HTMLSelectElement;
+  const interval = Number(target.value);
+  emit('update:selectedRefreshInterval', interval);
+  emit('changeRefreshInterval', interval);
+};
 </script>
 
 <template>
@@ -16,6 +61,36 @@ const protocol = ref("ALL");
       <button v-for="item in protocols" @click="protocol = item">
         {{ item }}
       </button>
+      <span></span>
+      <div class="menu-group">
+        <label class="menu-label">{{ t("menu.autoRefresh") }}</label>
+        <div class="refresh-controls">
+          <button
+              :class="['refresh-toggle-btn', { active: isAutoRefreshEnabled }]"
+              @click="toggleAutoRefresh"
+          >
+            {{
+              isAutoRefreshEnabled
+                  ? t("menu.refreshStop")
+                  : t("menu.refreshStart")
+            }}
+          </button>
+          <select
+              :value="selectedRefreshInterval"
+              @change="handleRefreshIntervalChange"
+              class="refresh-interval-select"
+              :disabled="!isAutoRefreshEnabled"
+          >
+            <option
+                v-for="interval in refreshIntervals"
+                :key="interval"
+                :value="interval"
+            >
+              {{ interval }}{{ t("menu.refreshInterval") }}
+            </option>
+          </select>
+        </div>
+      </div>
     </div>
   </div>
 </template>

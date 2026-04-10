@@ -30,10 +30,10 @@ const connections = ref<Connection[]>([]);
 // 自动刷新相关状态
 const autoRefreshInterval = ref<number | null>(null);
 const isAutoRefreshEnabled = ref(false);
-// const refreshIntervals = [1, 2, 3, 5, 10]; // 可选的刷新间隔（秒）
+const refreshIntervals = [1, 2, 3, 5, 10]; // 可选的刷新间隔（秒）
 // const isFirstLoad = ref(true); // 标记是否是首次加载
 
-const selectedRefreshInterval = ref(3); // 默认选择5秒
+const selectedRefreshInterval = ref(1);
 
 
 // 存储用户自定义的列宽
@@ -72,6 +72,41 @@ function enableAutoRefresh() {
   statusBarInfo.value.refreshInterval = selectedRefreshInterval.value;
 }
 
+// 禁用自动刷新
+function disableAutoRefresh() {
+  if (autoRefreshInterval.value !== null) {
+    clearInterval(autoRefreshInterval.value);
+    autoRefreshInterval.value = null;
+  }
+
+  isAutoRefreshEnabled.value = false;
+  statusBarInfo.value.refreshInterval = null;
+}
+
+// 切换自动刷新
+function toggleAutoRefresh() {
+  if (isAutoRefreshEnabled.value) {
+    disableAutoRefresh();
+  } else {
+    enableAutoRefresh();
+  }
+}
+
+// 更改刷新间隔
+function changeRefreshInterval(interval: number) {
+  selectedRefreshInterval.value = interval;
+
+  // 如果自动刷新已启用，重新设置间隔
+  if (isAutoRefreshEnabled.value) {
+    enableAutoRefresh();
+  }
+
+  // 更新状态栏信息
+  if (isAutoRefreshEnabled.value) {
+    statusBarInfo.value.refreshInterval = selectedRefreshInterval.value;
+  }
+}
+
 // 页面加载完成后自动获取连接列表
 onMounted(async () => {
   // 设置语言为本地存储的语言或浏览器语言
@@ -88,7 +123,14 @@ onMounted(async () => {
 
 <template>
   <main class="container">
-    <MenuBar/>
+    <MenuBar
+        :isAutoRefreshEnabled="isAutoRefreshEnabled"
+        :selectedRefreshInterval="selectedRefreshInterval"
+        :refreshIntervals="refreshIntervals"
+        @toggleAutoRefresh="toggleAutoRefresh"
+        @changeRefreshInterval="changeRefreshInterval"
+        @update:selectedRefreshInterval="selectedRefreshInterval = $event"
+    />
     <ConnectionsTable
       :connections="connections"
       :custom-column-widths="customColumnWidths"

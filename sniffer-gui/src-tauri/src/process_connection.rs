@@ -1,5 +1,5 @@
 use crate::cache::get_process_icon_by_path;
-use crate::models::AppState;
+use crate::models::{AppState, ConnectionKey};
 use netstat2::{get_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -20,25 +20,6 @@ pub struct ProcessConnection {
     pub start_time: Option<u64>, // Process start time in seconds since Unix epoch
     pub fill_column: String,     // Fill column for filling remaining space
 }
-
-// #[allow(dead_code)]
-// #[derive(Debug, Clone, Serialize, Deserialize)]
-// pub struct Connection {
-//     pub id: String,
-//     pub src_ip: String,
-//     pub src_port: u16,
-//     pub dst_ip: String,
-//     pub dst_port: u16,
-//     pub protocol: String,
-//     pub domain: Option<String>,
-//     pub path: Option<String>,
-//     pub start: Instant,
-//     pub now: Instant,
-//     pub up_bytes: u64,
-//     pub down_bytes: u64,
-//     pub is_init: bool,
-//     pub process_connection: Option<ProcessConnection>,
-// }
 
 // 将 netstat2 的 TCP 状态转换为字符串
 fn tcp_state_to_string(state: TcpState) -> &'static str {
@@ -64,7 +45,7 @@ fn tcp_state_to_string(state: TcpState) -> &'static str {
 // 获取系统网络连接列表
 pub async fn get_process_connections(
     state: &Arc<AppState>,
-) -> Result<HashMap<String, ProcessConnection>, String> {
+) -> Result<HashMap<ConnectionKey, ProcessConnection>, String> {
     let mut connections = state.process_connections.write().await;
 
     // 设置地址族标志 (IPv4 和 IPv6)
@@ -144,11 +125,14 @@ pub async fn get_process_connections(
                     None
                 };
 
-                let id = format!(
-                    "{}://{}:{}@{}:{}",
-                    protocol, local_addr, local_port, remote_addr, remote_port
-                );
-                connections.entry(id).or_insert(ProcessConnection {
+                let key = ConnectionKey {
+                    protocol: protocol.clone().to_lowercase(),
+                    local_addr: local_addr.clone(),
+                    local_port: local_port.clone(),
+                    remote_addr: remote_addr.clone(),
+                    remote_port: remote_port.clone(),
+                };
+                connections.entry(key).or_insert(ProcessConnection {
                     protocol,
                     local_addr,
                     local_port,
@@ -219,11 +203,15 @@ pub async fn get_process_connections(
                     None
                 };
 
-                let id = format!(
-                    "{}://{}:{}@{}:{}",
-                    protocol, local_addr, local_port, remote_addr, remote_port
-                );
-                connections.entry(id).or_insert(ProcessConnection {
+                let key = ConnectionKey {
+                    protocol: protocol.clone().to_lowercase(),
+                    local_addr: local_addr.clone(),
+                    local_port: local_port.clone(),
+                    remote_addr: remote_addr.clone(),
+                    remote_port: remote_port.clone(),
+                };
+                // info!("key: {:?}, pid: {:?}", key, pid);
+                connections.entry(key).or_insert(ProcessConnection {
                     protocol,
                     local_addr,
                     local_port,
@@ -239,6 +227,8 @@ pub async fn get_process_connections(
             }
         }
     }
+
+    // info!("connections: {:?}", connections.iter().map(|(k, v)| (k, v.pid, v.process_name.clone())).collect::<Vec<_>>());
 
     Ok(connections.clone())
 }

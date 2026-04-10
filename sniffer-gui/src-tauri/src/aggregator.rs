@@ -1,11 +1,11 @@
 use crate::capture::PacketInfo;
-use crate::models::{AppState, Connection, NetworkStats};
+use crate::models::{AppState, Connection, ConnectionKey, NetworkStats};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::select;
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
-use tracing::{debug, info, trace};
+use tracing::{debug, info};
 use sniffer::utils::registry::Registry;
 use crate::process_connection::{get_process_connections, ProcessConnection};
 use sniffer::packet::Connection as PacketConnection;
@@ -16,12 +16,16 @@ impl Aggregator {
     pub async fn start(mut rx: mpsc::Receiver<PacketInfo>, state: Arc<AppState>) {
         info!("Aggregator started");
         let mut ticker = interval(Duration::from_secs(1));
+        let mut process_ticker = interval(Duration::from_millis(50));
         let mut last_t = ticker.tick().await;
         loop {
             select! {
                 Some(packet) = rx.recv() => {
                      debug!("Received packet {:?}", packet);
                      Self::update_connection(&state, packet).await;
+                }
+                _ = process_ticker.tick() => {
+                    let _ = get_process_connections(&state).await;
                 }
                 t = ticker.tick() => {
                     let millis = t.saturating_duration_since(last_t).as_millis();
@@ -33,6 +37,68 @@ impl Aggregator {
             }
         }
         info!("First tick at {:?}", last_t);
+    }
+
+    async fn get_process_connection_by_key(state: &Arc<AppState>, key: ConnectionKey) -> Option<ProcessConnection> {
+        let process_connections = state.process_connections.read().await;
+        if let Some(process_connection) = process_connections.get(&key) {
+            return Some(process_connection.to_owned());
+        }
+        if let Some(key) = process_connections.keys().into_iter().filter(|k| {
+            k.protocol == key.protocol
+                && k.remote_addr == key.remote_addr
+                && k.remote_port == key.remote_port
+        }).next() {
+            return process_connections.get(&key).cloned();
+        }
+        if let Some(key) = process_connections.keys().into_iter().filter(|k| {
+            k.protocol == key.protocol
+                && (
+                k.local_addr == key.local_addr
+                    || k.local_addr.starts_with("::")
+            )
+                && k.local_port == key.local_port
+                && (k.remote_addr.starts_with("::") || k.remote_addr == "*".to_string())
+                && k.remote_port == key.remote_port
+        }).next() {
+            return process_connections.get(&key).cloned();
+        }
+        if let Some(key) = process_connections.keys().into_iter().filter(|k| {
+            k.protocol == key.protocol
+                && (
+                    k.local_addr == key.local_addr
+                    || k.local_addr.starts_with("::")
+                )
+                && k.local_port == key.local_port
+            && (k.remote_addr.starts_with("::") || k.remote_addr == "*".to_string())
+            && k.remote_port == 0
+        }).next() {
+            return process_connections.get(&key).cloned();
+        }
+
+
+        if let Some(key) = process_connections.keys().into_iter().filter(|k| {
+            k.protocol == key.protocol
+                && (k.local_addr.starts_with("::")
+                || k.local_addr == "0.0.0.0".to_string()
+                || k.local_addr == "127.0.0.1".to_string()
+            )
+            && k.local_port == key.local_port
+        }).next() {
+            return process_connections.get(&key).cloned();
+        }
+        if let Some(key) = process_connections.keys().into_iter().filter(|k| {
+            k.protocol == key.protocol && k.protocol == "udp"
+                && (k.local_addr.starts_with("::")
+                    || k.local_addr == "0.0.0.0".to_string()
+                    || k.local_addr == "127.0.0.1".to_string()
+                )
+                && k.local_port == 0
+        }).next() {
+            return process_connections.get(&key).cloned();
+        }
+
+        None
     }
 
     async fn update_connection(state: &Arc<AppState>, packet: PacketInfo) {
@@ -54,18 +120,20 @@ impl Aggregator {
             packet.protocol.to_lowercase(),
             local_addr, local_port, remote_addr, remote_port
         );
-        trace!("update_connection id: {}", id);
+        let key = ConnectionKey {
+            protocol: packet.protocol.to_lowercase(),
+            local_addr: local_addr.clone(),
+            local_port: local_port.clone(),
+            remote_addr: remote_addr.clone(),
+            remote_port: remote_port.clone(),
+        };
+        let process_connection = Self::get_process_connection_by_key(state, key).await;
+        let packet_connection = Registry::get::<PacketConnection>(id.clone());
 
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-
-        let mut process_connection: Option<ProcessConnection> = None;
-        if let Ok(proc_conns) = get_process_connections(&state).await {
-            process_connection = proc_conns.get(id.clone().as_str()).cloned();
-        }
-        let packet_connection = Registry::get::<PacketConnection>(id.clone());
 
         conns
             .entry(id.clone())
@@ -80,7 +148,7 @@ impl Aggregator {
                 conn.last_active = now;
                 conn.status = "active".to_string();
                 conn.process_connection = conn.clone().process_connection.or(process_connection.clone());
-                conn.packet_connection = conn.clone().packet_connection.or(packet_connection.clone());
+                conn.packet_connection = packet_connection.clone();
             })
             .or_insert(Connection {
                 id,
@@ -133,7 +201,7 @@ impl Aggregator {
             b_total.cmp(&a_total) // 降序
         });
 
-        for (_id, conn )in conns.iter_mut() {
+        for (_id, conn ) in conns.iter_mut() {
             total_sent += conn.bytes_sent;
             total_recv += conn.bytes_recv;
             total_packets += conn.packets_sent + conn.packets_recv;
@@ -153,8 +221,8 @@ impl Aggregator {
             total_packets,
             active_connections: connections.len(),
             top_connections: connections.into_iter().take(10).collect(),
-            upload_speed: 0, // 实际计算需要前一次数据
-            download_speed: 0,
+            upload_speed: total_sent * 1000 / millis,
+            download_speed: total_recv * 1000 / millis,
         };
 
         let mut history = state.stats_history.write().await;
