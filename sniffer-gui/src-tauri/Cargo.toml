@@ -40,3 +40,5 @@ tracing-subscriber = {version = "0.3.23", features = ["time", "env-filter"] }
 time = "0.3.20"
 pcap = "2.4.0"
 bytesize = "1.1.0"
+pcap-file = "1.1"
+async-channel = "2.5.0"

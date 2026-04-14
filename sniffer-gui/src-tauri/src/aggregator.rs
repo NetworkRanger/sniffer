@@ -3,7 +3,6 @@ use crate::models::{AppState, Connection, ConnectionKey, NetworkStats};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::select;
-use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
 use tracing::{debug, info};
 use sniffer::utils::registry::Registry;
@@ -13,7 +12,7 @@ use sniffer::packet::Connection as PacketConnection;
 pub struct Aggregator;
 
 impl Aggregator {
-    pub async fn start(mut rx: mpsc::Receiver<PacketInfo>, state: Arc<AppState>) {
+    pub async fn start(mut rx: tokio::sync::mpsc::Receiver<PacketInfo>, state: Arc<AppState>) {
         info!("Aggregator started");
         let mut ticker = interval(Duration::from_secs(1));
         let mut process_ticker = interval(Duration::from_millis(50));

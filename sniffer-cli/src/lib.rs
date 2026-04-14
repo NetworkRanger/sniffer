@@ -58,13 +58,14 @@ pub fn cli_run() {
     Registry::set("mac", mac.clone(), Some(0u64));
 
     // 配置捕获
-    let cap = Capture::from_device(device.clone())
+    let mut cap = Capture::from_device(device.clone())
         .unwrap()
         .promisc(true) // 混杂模式
         .snaplen(65535) // 最大捕获长度
         .timeout(500) // 读取超时 ms
         .open()
         .unwrap();
+    let _ = cap.filter("tcp or udp", true);
     
     let (pcap_tx, pcap_rx) = std::sync::mpsc::sync_channel(10_000);
     let _ = thread::Builder::new()

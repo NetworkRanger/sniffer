@@ -1,18 +1,22 @@
-use std::panic;
 use crate::models::AppState;
-use pnet::datalink::{self, Channel::Ethernet};
+use pcap::{Capture, Device, PacketHeader};
 use pnet::packet::ethernet::{EtherTypes, EthernetPacket};
 use pnet::packet::ipv4::Ipv4Packet;
 use pnet::packet::tcp::TcpPacket;
 use pnet::packet::udp::UdpPacket;
 use pnet::packet::Packet;
-use std::sync::Arc;
-use tracing::{debug, error, info, trace};
 use sniffer::packet::{parse_tcp, parse_udp};
+use sniffer::utils::get_mac_by_name;
 use sniffer::utils::registry::Registry;
+use std::sync::Arc;
+use std::{net, panic};
+use tracing::{debug, error, info, trace};
 
+#[derive(Debug)]
 pub struct CaptureEngine {
     tx: tokio::sync::mpsc::Sender<PacketInfo>,
+    pcap_tx: async_channel::Sender<(PacketHeader, Vec<u8>)>,
+    device: Device,
 }
 
 #[derive(Clone, Debug)]
@@ -27,39 +31,72 @@ pub struct PacketInfo {
 }
 
 impl CaptureEngine {
-    pub fn new(tx: tokio::sync::mpsc::Sender<PacketInfo>) -> Self {
-        Self { tx }
+    pub fn new(
+        tx: tokio::sync::mpsc::Sender<PacketInfo>,
+        pcap_tx: async_channel::Sender<(PacketHeader, Vec<u8>)>,
+    ) -> Self {
+        let device_list = Device::list().expect("device list failed");
+        // 查找默认设备
+        let device = device_list
+            .iter()
+            .filter(|d| {
+                d.flags.connection_status == pcap::ConnectionStatus::Connected
+                    && d.addresses.len() > 0
+            })
+            .next()
+            .expect("no device available");
+        info!("Using device: {}", device.name);
+
+        let ip = device
+            .addresses
+            .iter()
+            .filter(|address| matches!(address.addr, net::IpAddr::V4(_)))
+            .next()
+            .unwrap()
+            .addr
+            .to_string();
+        info!("ip: {}", ip);
+        Registry::set("ip", ip.clone(), Some(0u64));
+
+        let mac = get_mac_by_name(device.name.as_str()).unwrap();
+        info!("Using device mac {}", mac);
+        Registry::set("mac", mac.clone(), Some(0u64));
+
+        Self {
+            tx,
+            pcap_tx,
+            device: device.to_owned(),
+        }
     }
 
-    pub fn start(&self, interface_name: String, state: Arc<AppState>) {
-        let interfaces = datalink::interfaces();
-        let interface = interfaces
-            .into_iter()
-            .find(|i| i.name == interface_name)
-            .expect("Interface not found");
+    pub fn start(&mut self, state: Arc<AppState>) {
+        // 配置捕获
+        let mut cap = Capture::from_device(self.device.clone())
+            .unwrap()
+            .promisc(true) // 混杂模式
+            .snaplen(65535) // 最大捕获长度
+            .timeout(500) // 读取超时 ms
+            .open()
+            .unwrap();
+        let _ = cap.filter("tcp or udp", true);
 
-        let (_, mut rx) = match datalink::channel(&interface, Default::default()) {
-            Ok(Ethernet(_, rx)) => ((), rx),
-            Ok(_) => panic!("Unhandled channel type"),
-            Err(e) => panic!("Failed to create channel: {}", e),
-        };
-
-        info!("Capture started on {}", interface_name);
+        info!("Capture started on {}", self.device.name);
 
         while *state.running.blocking_read() {
-            match rx.next() {
-                Ok(packet) => {
-                    let result = panic::catch_unwind(|| {
-                        if let Some(info) = parse_packet(packet) {
-                            trace!("info: {:?}", info);
-                            let _ = self.tx.try_send(info).unwrap(); // 发送到聚合器
-                        }
-                    });
-                    if result.is_err() {
-                        error!("packet parse error: {:?}", result);
+            if let Ok(packet) = cap.next_packet() {
+                let runtime = tokio::runtime::Runtime::new().unwrap();
+                runtime.block_on(async {
+                    let _ = self.pcap_tx.send((*packet.header, packet.data.to_vec())).await;
+                });
+                let result = panic::catch_unwind(|| {
+                    if let Some(info) = parse_packet(packet.data) {
+                        trace!("info: {:?}", info);
+                        let _ = self.tx.try_send(info).unwrap(); // 发送到聚合器
                     }
+                });
+                if result.is_err() {
+                    error!("packet parse error: {:?}", result);
                 }
-                Err(e) => eprintln!("Capture error: {}", e),
             }
         }
     }
@@ -93,7 +130,7 @@ fn parse_packet(packet: &[u8]) -> Option<PacketInfo> {
                     let length = tcp.payload().len() as u32;
                     debug!("tcp payload len: {}", length);
                     if length == 0 {
-                        return None
+                        return None;
                     }
                     Some(PacketInfo {
                         src_ip,

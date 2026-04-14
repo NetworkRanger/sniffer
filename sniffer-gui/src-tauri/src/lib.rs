@@ -3,24 +3,25 @@ mod capture;
 mod aggregator;
 mod cache;
 mod process_connection;
+mod pcap_writer;
+
 extern crate sniffer;
 
-use core::net;
-use sniffer::utils::get_mac_by_name;
 use sniffer::utils::registry::Registry;
 
 use tauri::State;
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::thread;
+use pcap::PacketHeader;
 use models::{AppState, NetworkStats, Connection};
-use pcap::{Device};
 use tracing_subscriber::fmt::time::OffsetTime;
 use time::macros::{format_description, offset};
 use tokio::runtime::Runtime;
 use tracing::info;
 use tracing_subscriber::{EnvFilter};
 use sniffer::config::Config;
+use crate::capture::PacketInfo;
 use crate::process_connection::get_process_connections;
 
 #[tauri::command]
@@ -48,11 +49,17 @@ async fn get_connections(
 
     // 按最后活跃时间排序
     list.sort_by(|a, b| {
-        let total_a = a.upload_speed + a.download_speed;
-        let total_b = b.upload_speed + b.download_speed;
-        let order = total_b.cmp(&total_a); // 降序
+        let speed_a = a.upload_speed + a.download_speed;
+        let speed_b = b.upload_speed + b.download_speed;
+        let order = speed_b.cmp(&speed_a); // 降序
         if order.is_eq() {
-            return b.last_active.cmp(&a.last_active);
+            let total_a = a.bytes_sent + a.bytes_recv;
+            let total_b = b.bytes_sent + b.bytes_recv;
+            let order = total_b.cmp(&total_a); // 降序
+            if order.is_eq() {
+                return b.last_active.cmp(&a.last_active);
+            }
+            return order;
         }
         order
     });
@@ -66,26 +73,36 @@ async fn get_connections(
 
 #[tauri::command]
 async fn start_capture(
-    interface: String,
     state: Arc<AppState>,
 ) -> Result<(), String> {
     // 设置运行状态
     *state.running.write().await = true;
 
     // 创建通道
-    let (tx, rx) = tokio::sync::mpsc::channel(10000);
+    let (tx, rx) = tokio::sync::mpsc::channel::<PacketInfo>(10000);
+    let (pcap_tx, pcap_rx) = async_channel::unbounded::<(PacketHeader, Vec<u8>)>();
+
+    // 启动 pcap 文件写入
+    let mut pcap_writer = pcap_writer::PcapWriter::new(pcap_rx);
+    let pcap_handle = thread::Builder::new()
+        .name("pcap_writer".to_string())
+        .spawn(move || {
+            let _ = pcap_writer.start();
+        }).expect("failed to start pcap writer");
 
     // 启动抓包引擎
-    let engine = capture::CaptureEngine::new(tx);
+    let mut engine = capture::CaptureEngine::new(tx, pcap_tx);
     let state_clone = state.clone();
     thread::Builder::new()
         .name("capture".to_string())
         .spawn(move || {
-            engine.start(interface, state_clone);
+            engine.start(state_clone);
         }).expect("failed to start capture engine");
 
     // 启动聚合器
     aggregator::Aggregator::start(rx, state).await;
+
+    let _ = pcap_handle.join().ok();
 
     Ok(())
 }
@@ -124,29 +141,6 @@ pub fn run() {
 
     let state_clone = state.clone();
     thread::spawn(move || {
-        let device_list = Device::list().expect("device list failed");
-        // 查找默认设备
-        let device = device_list
-            .iter()
-            .filter(|d| {
-                d.flags.connection_status == pcap::ConnectionStatus::Connected && d.addresses.len() > 0
-            })
-            .next()
-            .expect("no device available");
-
-        info!("Using device: {}", device.name);
-
-        let ip = device.addresses.iter()
-            .filter(|address| {
-                matches!(address.addr, net::IpAddr::V4(_))
-            })
-            .next().unwrap().addr.to_string();
-        info!("ip: {}", ip);
-        Registry::set("ip", ip.clone(), Some(0u64));
-
-        let mac = get_mac_by_name(device.name.as_str()).unwrap();
-        info!("Using device mac {}", mac);
-        Registry::set("mac", mac.clone(), Some(0u64));
         let config = Config::new();
         Registry::set("config", config.clone(), Some(0u64));
 
@@ -155,7 +149,7 @@ pub fn run() {
         // 阻塞等待异步完成
         let _result = rt.block_on(async move {
             let _ = get_process_connections(&state_clone).await.unwrap();
-            let _ = start_capture(device.name.clone(), state_clone).await;
+            let _ = start_capture(state_clone).await;
         });
     });
 
