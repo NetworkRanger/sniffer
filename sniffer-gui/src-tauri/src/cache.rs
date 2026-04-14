@@ -13,7 +13,7 @@ lazy_static::lazy_static! {
 
 // 初始化缓存目录
 fn initialize_cache_directory() -> Option<PathBuf> {
-    // 使用用户的 home 目录下的 .portview 目录
+    // 使用用户的 home 目录下的 .sniffer 目录
     let cache_dir = dirs::home_dir().map(|home| home.join(".sniffer"));
 
     let cache_dir = match cache_dir {

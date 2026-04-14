@@ -1,4 +1,4 @@
-use ring::{hkdf, aead};
+use ring::{hkdf};
 use tracing::info;
 
 // QUIC Initial Salt (RFC 9001)

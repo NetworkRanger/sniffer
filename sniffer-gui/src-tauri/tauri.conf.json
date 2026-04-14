@@ -13,9 +13,10 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "sniffer",
-        "width": 800,
-        "height": 600
+        "title": "Sniffer",
+        "maximized": true,
+        "fullscreen": false,
+        "resizable": true
       }
     ],
     "security": {

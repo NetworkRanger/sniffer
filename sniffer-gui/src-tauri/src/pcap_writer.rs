@@ -11,7 +11,9 @@ pub struct PcapWriter {
 
 impl PcapWriter {
     pub fn new(rx: async_channel::Receiver<(PcapPacketHeader, Vec<u8>)>) -> Self {
-        let file = File::create("capture.pcap").unwrap();
+        let file_path = dirs::home_dir().map(|home| home.join(".sniffer/capture.pcap"))
+            .unwrap().to_string_lossy().into_owned();
+        let file = File::create(&file_path).unwrap();
         let header = PcapHeader {
             magic_number: 0xa1b2c3d4,
             version_major: 2,

@@ -26,6 +26,10 @@ use sniffer::config::Config;
 use crate::capture::PacketInfo;
 use crate::process::get_processes;
 use crate::process_connection::get_process_connections;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use std::io;
+use tracing_appender::non_blocking::WorkerGuard;
 
 #[tauri::command]
 async fn get_network_stats(state: State<'_, Arc<AppState>>) -> Result<NetworkStats, String> {
@@ -116,6 +120,46 @@ async fn stop_capture(state: State<'_, Arc<AppState>>) -> Result<(), String> {
     Ok(())
 }
 
+fn init_logging() -> WorkerGuard {
+    // 1. 文件输出：按天滚动
+    let cache_dir = dirs::home_dir().map(|home| home.join(".sniffer"))
+        .unwrap().to_string_lossy().into_owned();
+
+    let file_appender = RollingFileAppender::new(Rotation::DAILY, &cache_dir, "app.log");
+    let (file_writer, guard) = tracing_appender::non_blocking(file_appender);
+
+    // 定义时间格式（年-月-日T时:分:秒.毫秒）
+    let time_fmt = format_description!(
+        "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]"
+    );
+
+    // 构造一个偏移 +8:00（北京时间）的时间格式器
+    let timer = OffsetTime::new(offset!(+8:00), time_fmt);
+
+    // 2. 控制台输出
+    let stdout_layer = tracing_subscriber::fmt::layer()
+        .with_writer(io::stdout)
+        .with_timer(timer.clone())
+        .with_ansi(true);
+
+    // 3. 文件输出层
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_timer(timer)
+        .with_writer(file_writer)
+        .with_ansi(false);
+
+    // 4. 组合 Layer
+    tracing_subscriber::registry()
+        .with(EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| "info".into()))
+        .with(file_layer)
+        .with(stdout_layer)
+        .init();
+
+    // 注意：_guard 需要保存在 main 中，防止 flush
+    return guard;
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let state = Arc::new(AppState {
@@ -126,22 +170,7 @@ pub fn run() {
         running: Arc::new(tokio::sync::RwLock::new(false)),
     });
 
-    // 定义时间格式（年-月-日T时:分:秒.毫秒）
-    let time_fmt = format_description!(
-        "[year]-[month]-[day] [hour]:[minute]:[second].[subsecond digits:3]"
-    );
-
-    // 构造一个偏移 +8:00（北京时间）的时间格式器
-    let timer = OffsetTime::new(offset!(+8:00), time_fmt);
-
-    // 安装 tracing-subscriber，并用自定义时间格式
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("info"))
-        )
-        .with_timer(timer)
-        .init();
+    let _guard = init_logging();
 
     let state_clone = state.clone();
     thread::spawn(move || {
