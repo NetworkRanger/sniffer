@@ -1,25 +1,10 @@
 use crate::cache::get_process_icon_by_path;
-use crate::models::{AppState, ConnectionKey};
+use crate::models::{AppState, ConnectionKey, ProcessConnection};
 use netstat2::{get_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState};
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::env::consts;
 use std::sync::Arc;
-use sysinfo::{Pid, System};
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProcessConnection {
-    pub protocol: String,
-    pub local_addr: String,
-    pub local_port: u16,
-    pub remote_addr: String,
-    pub remote_port: u16,
-    pub state: String,
-    pub pid: Option<u32>,
-    pub process_name: Option<String>,
-    pub icon: Option<String>,    // Base64 encoded icon data
-    pub start_time: Option<u64>, // Process start time in seconds since Unix epoch
-    pub fill_column: String,     // Fill column for filling remaining space
-}
+use crate::platform::macos::process_connection::MacOSNetMonitor;
 
 // 将 netstat2 的 TCP 状态转换为字符串
 fn tcp_state_to_string(state: TcpState) -> &'static str {
@@ -42,11 +27,74 @@ fn tcp_state_to_string(state: TcpState) -> &'static str {
 
 // ==================== 网络连接相关函数 ====================
 
-// 获取系统网络连接列表
 pub async fn get_process_connections(
+    state: &Arc<AppState>,
+) -> Result<HashMap<ConnectionKey, ProcessConnection>, String>
+{
+    match consts::OS {
+        "macos" => get_macos_process_connections(state).await,
+        _ => get_platform_process_connections(state).await,
+    }
+}
+
+// 获取系统网络连接列表
+pub async fn get_macos_process_connections(
     state: &Arc<AppState>,
 ) -> Result<HashMap<ConnectionKey, ProcessConnection>, String> {
     let mut connections = state.process_connections.write().await;
+    let all_connections = MacOSNetMonitor::get_all_connections();
+    let process_map = state.processes.read().await;
+    for proc_info in all_connections {
+        for sock in &proc_info.sockets {
+            let pid = proc_info.pid.clone() as u32;
+            let process_info = process_map.get(&(pid as usize).into());
+            let process_name = process_info.map(|p| p.name.clone());
+            let icon = process_info.and_then(|p| get_process_icon_by_path(&p.exe));
+            let start_time = process_info.map(|p| p.start_time);
+
+            let key = ConnectionKey {
+                protocol: sock.protocol.clone().to_lowercase(),
+                local_addr: sock.local_addr.clone(),
+                local_port: sock.local_port.clone(),
+                remote_addr: sock.remote_addr.clone(),
+                remote_port: sock.remote_port.clone(),
+            };
+            let process_connection = ProcessConnection {
+                protocol: sock.protocol.clone(),
+                local_addr: sock.local_addr.clone(),
+                local_port: sock.local_port.clone(),
+                remote_addr: sock.remote_addr.clone(),
+                remote_port: sock.remote_port.clone(),
+                state: sock.state.clone(),
+                pid: Some(pid),
+                process_name: process_name.clone(),
+                icon: icon.clone(),
+                start_time,
+                fill_column: String::new(),
+            };
+            connections.entry(key)
+                .and_modify(|c| {
+                    if c.pid.is_none() {
+                        c.pid = Some(pid);
+                        c.process_name = process_name;
+                        c.icon = icon;
+                        c.start_time = start_time;
+                    }
+                })
+                .or_insert(process_connection);
+        }
+    }
+
+
+    Ok(connections.clone())
+}
+
+// 获取系统网络连接列表
+pub async fn get_platform_process_connections(
+    state: &Arc<AppState>,
+) -> Result<HashMap<ConnectionKey, ProcessConnection>, String> {
+    let mut connections = state.process_connections.write().await;
+    let process_map = state.processes.read().await;
 
     // 设置地址族标志 (IPv4 和 IPv6)
     let af_flags = AddressFamilyFlags::IPV4 | AddressFamilyFlags::IPV6;
@@ -55,16 +103,6 @@ pub async fn get_process_connections(
 
     // 获取网络连接信息
     let sockets_info = get_sockets_info(af_flags, proto_flags).map_err(|e| e.to_string())?;
-
-    // 创建系统信息实例以获取进程名称
-    let system = System::new_all();
-
-    // 预先构建进程信息映射表，避免重复查询
-    let mut process_map: HashMap<Pid, &sysinfo::Process> =
-        HashMap::new();
-    for process in system.processes().values() {
-        process_map.insert(process.pid(), process);
-    }
 
     for si in sockets_info {
         match si.protocol_socket_info {
@@ -95,7 +133,7 @@ pub async fn get_process_connections(
 
                 // 根据 PID 获取进程名称
                 let process_name = if let Some(process) = process_info {
-                    Some(process.name().to_string())
+                    Some(process.name.clone())
                 } else if pid.is_some() {
                     // 如果无法获取进程信息，可能是内核进程或权限不足，显示特殊标识
                     Some("[KERNEL]".to_string())
@@ -103,27 +141,8 @@ pub async fn get_process_connections(
                     None
                 };
 
-                // 获取进程图标 - 使用统一的缓存机制
-                let icon = if let Some(process) = process_info {
-                    if let Some(exe_path) = process.exe() {
-                        let exe_path_str = exe_path.to_string_lossy();
-                        get_process_icon_by_path(&exe_path_str)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                // 获取进程启动时间
-                let start_time = if let Some(process) = process_info {
-                    Some(process.start_time())
-                } else if pid.is_some() {
-                    // 内核进程的时间信息可能不可用，返回0
-                    Some(0)
-                } else {
-                    None
-                };
+                let icon = process_info.and_then(|p| get_process_icon_by_path(&p.exe));
+                let start_time = process_info.map(|p| p.start_time);
 
                 let key = ConnectionKey {
                     protocol: protocol.clone().to_lowercase(),
@@ -173,7 +192,7 @@ pub async fn get_process_connections(
 
                 // 根据 PID 获取进程名称
                 let process_name = if let Some(process) = process_info {
-                    Some(process.name().to_string())
+                    Some(process.name.clone())
                 } else if pid.is_some() {
                     // 如果无法获取进程信息，可能是内核进程或权限不足，显示特殊标识
                     Some("[KERNEL]".to_string())
@@ -181,27 +200,8 @@ pub async fn get_process_connections(
                     None
                 };
 
-                // 获取进程图标 - 使用统一的缓存机制
-                let icon = if let Some(process) = process_info {
-                    if let Some(exe_path) = process.exe() {
-                        let exe_path_str = exe_path.to_string_lossy();
-                        get_process_icon_by_path(&exe_path_str)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-                // 获取进程启动时间
-                let start_time = if let Some(process) = process_info {
-                    Some(process.start_time())
-                } else if pid.is_some() {
-                    // 内核进程的时间信息可能不可用，返回0
-                    Some(0)
-                } else {
-                    None
-                };
+                let icon = process_info.and_then(|p| get_process_icon_by_path(&p.exe));
+                let start_time = process_info.map(|p| p.start_time);
 
                 let key = ConnectionKey {
                     protocol: protocol.clone().to_lowercase(),
@@ -210,7 +210,6 @@ pub async fn get_process_connections(
                     remote_addr: remote_addr.clone(),
                     remote_port: remote_port.clone(),
                 };
-                // info!("key: {:?}, pid: {:?}", key, pid);
                 connections.entry(key).or_insert(ProcessConnection {
                     protocol,
                     local_addr,
@@ -227,8 +226,6 @@ pub async fn get_process_connections(
             }
         }
     }
-
-    // info!("connections: {:?}", connections.iter().map(|(k, v)| (k, v.pid, v.process_name.clone())).collect::<Vec<_>>());
 
     Ok(connections.clone())
 }

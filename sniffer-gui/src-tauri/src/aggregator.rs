@@ -1,13 +1,14 @@
 use crate::capture::PacketInfo;
-use crate::models::{AppState, Connection, ConnectionKey, NetworkStats};
+use crate::models::{AppState, Connection, ConnectionKey, NetworkStats, ProcessConnection};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::select;
 use tokio::time::{interval, Duration};
-use tracing::{debug, info};
+use tracing::{info};
 use sniffer::utils::registry::Registry;
-use crate::process_connection::{get_process_connections, ProcessConnection};
+use crate::process_connection::{get_process_connections};
 use sniffer::packet::Connection as PacketConnection;
+use crate::process::get_processes;
 
 pub struct Aggregator;
 
@@ -15,27 +16,29 @@ impl Aggregator {
     pub async fn start(mut rx: tokio::sync::mpsc::Receiver<PacketInfo>, state: Arc<AppState>) {
         info!("Aggregator started");
         let mut ticker = interval(Duration::from_secs(1));
-        let mut process_ticker = interval(Duration::from_millis(50));
+        let mut process_conn_ticker = interval(Duration::from_millis(50));
+        let mut process_ticker = interval(Duration::from_millis(200));
         let mut last_t = ticker.tick().await;
         loop {
             select! {
                 Some(packet) = rx.recv() => {
-                     debug!("Received packet {:?}", packet);
                      Self::update_connection(&state, packet).await;
                 }
-                _ = process_ticker.tick() => {
+                _ = process_conn_ticker.tick() => {
                     let _ = get_process_connections(&state).await;
+                }
+                _ = process_ticker.tick() => {
+                    let _ = get_processes(&state).await;
                 }
                 t = ticker.tick() => {
                     let millis = t.saturating_duration_since(last_t).as_millis();
                     last_t = t;
-                    debug!("Tick at {:?} {:?}", t, millis);
+                    let _ = get_processes(&state).await;
                     Self::calculate_stats(&state, millis as u64).await;
                 }
                 else => break,
             }
         }
-        info!("First tick at {:?}", last_t);
     }
 
     async fn get_process_connection_by_key(state: &Arc<AppState>, key: ConnectionKey) -> Option<ProcessConnection> {

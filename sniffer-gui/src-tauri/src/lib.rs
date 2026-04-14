@@ -4,6 +4,8 @@ mod aggregator;
 mod cache;
 mod process_connection;
 mod pcap_writer;
+mod platform;
+mod process;
 
 extern crate sniffer;
 
@@ -22,6 +24,7 @@ use tracing::info;
 use tracing_subscriber::{EnvFilter};
 use sniffer::config::Config;
 use crate::capture::PacketInfo;
+use crate::process::get_processes;
 use crate::process_connection::get_process_connections;
 
 #[tauri::command]
@@ -116,6 +119,7 @@ async fn stop_capture(state: State<'_, Arc<AppState>>) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let state = Arc::new(AppState {
+        processes: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         process_connections: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         connections: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         stats_history: Arc::new(tokio::sync::RwLock::new(Vec::new())),
@@ -148,6 +152,7 @@ pub fn run() {
         let rt = Runtime::new().unwrap();
         // 阻塞等待异步完成
         let _result = rt.block_on(async move {
+            let _ = get_processes(&state_clone).await.unwrap();
             let _ = get_process_connections(&state_clone).await.unwrap();
             let _ = start_capture(state_clone).await;
         });

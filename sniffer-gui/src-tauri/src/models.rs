@@ -1,8 +1,8 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use sysinfo::{Pid};
 use tokio::sync::RwLock;
-use crate::process_connection::ProcessConnection;
 use sniffer::packet::Connection as PacketConnection;
 
 #[derive(Serialize, Clone, Debug)]
@@ -54,10 +54,33 @@ pub struct ConnectionKey {
     pub remote_port: u16,
 }
 
+#[derive(Debug, Clone)]
+pub struct ProcessInfo {
+    pub name: String,
+    pub exe: String,
+    pub start_time: u64,
+}
+
 // 应用状态
 pub struct AppState {
+    pub processes: Arc<RwLock<HashMap<Pid, ProcessInfo>>>,
     pub process_connections: Arc<RwLock<HashMap<ConnectionKey, ProcessConnection>>>,
     pub connections: Arc<RwLock<HashMap<String, Connection>>>,
     pub stats_history: Arc<RwLock<Vec<NetworkStats>>>,  // 最近5分钟数据
     pub running: Arc<RwLock<bool>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessConnection {
+    pub protocol: String,
+    pub local_addr: String,
+    pub local_port: u16,
+    pub remote_addr: String,
+    pub remote_port: u16,
+    pub state: String,
+    pub pid: Option<u32>,
+    pub process_name: Option<String>,
+    pub icon: Option<String>,    // Base64 encoded icon data
+    pub start_time: Option<u64>, // Process start time in seconds since Unix epoch
+    pub fill_column: String,     // Fill column for filling remaining space
 }
