@@ -1,154 +1,86 @@
 <script setup lang="ts">
-import MenuBar from "./components/MenuBar.vue";
-import ConnectionsTable from "./components/ConnectionsTable.vue";
-import {onMounted, ref} from "vue";
-import { useI18n } from "vue-i18n";
-import StatusBar from "./components/StatusBar.vue";
-import type { Connection } from "./types/connection";
+import {computed, onMounted, onUnmounted, ref} from "vue";
+import {useI18n} from "vue-i18n";
 import {invoke} from "@tauri-apps/api/core";
+import type {Connection} from "./types/connection";
+import {filesize} from "filesize";
 
-// 初始化国际化
-const {t} = useI18n();
-
-// 状态栏信息
-const statusBarInfo = ref({
-  totalConnections: 0,
-  tcpConnections: 0,
-  udpConnections: 0,
-  kernelConnections: 0,
-  establishedConnections: 0,
-  listenConnections: 0,
-  timeWaitConnections: 0,
-  closeWaitConnections: 0,
-  otherConnections: 0,
-  lastUpdate: new Date().toLocaleTimeString(),
-  refreshInterval: null as number | null,
-});
-
-const isLoading = ref(false);
-const connections = ref<Connection[]>([]);
-// 自动刷新相关状态
-const autoRefreshInterval = ref<number | null>(null);
-const isAutoRefreshEnabled = ref(false);
-const refreshIntervals = [1, 2, 3, 5, 10]; // 可选的刷新间隔（秒）
-// const isFirstLoad = ref(true); // 标记是否是首次加载
-
-const selectedRefreshInterval = ref(1);
-
-
-// 存储用户自定义的列宽
-const customColumnWidths = ref<Record<string, number>>({});
-
-async function loadConnections() {
-  isLoading.value = true;
-  try {
-    const result: Connection[] = await invoke("get_connections");
-    console.log('result', result);
-    // 应用筛选条件
-    let filteredResult = result;
-
-    // 将所有连接（包括标记为删除的）赋值给connections，以便在UI中显示删除状态
-    connections.value = filteredResult;
-  } catch (error) {
-    console.error(t("alerts.getConnectionsFailed", { error }), error);
-
-  } finally {
-    isLoading.value = false;
-  }
-}
-
-// 启用自动刷新
-function enableAutoRefresh() {
-  if (autoRefreshInterval.value !== null) {
-    clearInterval(autoRefreshInterval.value);
-  }
-
-  isAutoRefreshEnabled.value = true;
-  autoRefreshInterval.value = window.setInterval(() => {
-    loadConnections();
-  }, selectedRefreshInterval.value * 1000); // 转换为毫秒
-
-  // 更新状态栏信息
-  statusBarInfo.value.refreshInterval = selectedRefreshInterval.value;
-}
-
-// 禁用自动刷新
-function disableAutoRefresh() {
-  if (autoRefreshInterval.value !== null) {
-    clearInterval(autoRefreshInterval.value);
-    autoRefreshInterval.value = null;
-  }
-
-  isAutoRefreshEnabled.value = false;
-  statusBarInfo.value.refreshInterval = null;
-}
-
-// 切换自动刷新
-function toggleAutoRefresh() {
-  if (isAutoRefreshEnabled.value) {
-    disableAutoRefresh();
-  } else {
-    enableAutoRefresh();
-  }
-}
-
-// 更改刷新间隔
-function changeRefreshInterval(interval: number) {
-  selectedRefreshInterval.value = interval;
-
-  // 如果自动刷新已启用，重新设置间隔
-  if (isAutoRefreshEnabled.value) {
-    enableAutoRefresh();
-  }
-
-  // 更新状态栏信息
-  if (isAutoRefreshEnabled.value) {
-    statusBarInfo.value.refreshInterval = selectedRefreshInterval.value;
-  }
-}
-
-// 页面加载完成后自动获取连接列表
 onMounted(async () => {
-  // 设置语言为本地存储的语言或浏览器语言
   const {locale} = useI18n();
   locale.value = "zh";
-
-  loadConnections();
-  // setTimeout(loadConnections, 5000);
-  enableAutoRefresh();
+  loadStats();
+  timer = window.setInterval(loadStats, 1000);
 });
 
+onUnmounted(() => { if (timer) clearInterval(timer); });
 
+let timer: number | null = null;
+const connections = ref<Connection[]>([]);
+
+async function loadStats() {
+  try {
+    connections.value = await invoke<Connection[]>("get_connections");
+  } catch {}
+}
+
+const bytesize = (n: number) =>
+    filesize(n, {base: 2, standard: "jedec", round: 1}).replace(" ", "");
+
+const uploadSpeed = computed(() =>
+    connections.value.reduce((s, c) => s + c.upload_speed, 0));
+const downloadSpeed = computed(() =>
+    connections.value.reduce((s, c) => s + c.download_speed, 0));
+const totalBytes = computed(() =>
+    connections.value.reduce((s, c) => s + c.bytes_sent + c.bytes_recv, 0));
+
+const fmtSpeed = (n: number) => {
+  const s = filesize(n, {base: 2, standard: "jedec", round: 2, output: "object"}) as any;
+  return {val: s.value, unit: s.symbol.replace('B', '') + 'B/s'};
+};
+const fmtTotal = (n: number) => {
+  const s = filesize(n, {base: 2, standard: "jedec", round: 1, output: "object"}) as any;
+  return {val: s.value, unit: s.symbol};
+};
 </script>
 
 <template>
-  <main class="container">
-    <MenuBar
-        :isAutoRefreshEnabled="isAutoRefreshEnabled"
-        :selectedRefreshInterval="selectedRefreshInterval"
-        :refreshIntervals="refreshIntervals"
-        @toggleAutoRefresh="toggleAutoRefresh"
-        @changeRefreshInterval="changeRefreshInterval"
-        @update:selectedRefreshInterval="selectedRefreshInterval = $event"
-    />
-    <ConnectionsTable
-      :connections="connections"
-      :custom-column-widths="customColumnWidths"
-    />
-    <StatusBar :status-bar-info="statusBarInfo" />
-  </main>
+  <el-container style="height: 100vh;">
+    <el-aside width="80px" style="background: white; height: 100vh; min-width: 80px; display: flex; flex-direction: column;">
+      <el-menu style="flex: 1;">
+        <router-link to="/index">
+          <el-menu-item index="1">首页</el-menu-item>
+        </router-link>
+        <router-link to="/connection">
+          <el-menu-item index="2">连接</el-menu-item>
+        </router-link>
+        <router-link to="/log">
+          <el-menu-item index="3">日志</el-menu-item>
+        </router-link>
+      </el-menu>
+      <div class="net-stats">
+        <div class="net-stats__divider"></div>
+        <div class="net-stats__row">
+          <span class="net-stats__icon up">↑</span>
+          <span class="net-stats__val up">{{ fmtSpeed(uploadSpeed).val }}</span>
+          <span class="net-stats__unit">{{ fmtSpeed(uploadSpeed).unit }}</span>
+        </div>
+        <div class="net-stats__row">
+          <span class="net-stats__icon down">↓</span>
+          <span class="net-stats__val down">{{ fmtSpeed(downloadSpeed).val }}</span>
+          <span class="net-stats__unit">{{ fmtSpeed(downloadSpeed).unit }}</span>
+        </div>
+        <div class="net-stats__row">
+          <span class="net-stats__icon total">⊕</span>
+          <span class="net-stats__val total">{{ fmtTotal(totalBytes).val }}</span>
+          <span class="net-stats__unit">{{ fmtTotal(totalBytes).unit }}</span>
+        </div>
+      </div>
+    </el-aside>
+    <el-main style="padding: 0; flex: 1; overflow: hidden;">
+      <router-view></router-view>
+    </el-main>
+  </el-container>
 </template>
-
-<style scoped>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
-
-.logo.vue:hover {
-  filter: drop-shadow(0 0 2em #249b73);
-}
-
-</style>
 <style>
 :root {
   font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
@@ -166,29 +98,92 @@ onMounted(async () => {
   -webkit-text-size-adjust: 100%;
 }
 
-.container {
-  margin: 0;
-  padding-top: 10vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
+.el-header, .el-footer {
+  background-color: #B3C0D1;
+  color: #333;
   text-align: center;
+  line-height: 60px;
 }
 
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
+.el-aside {
+  background-color: #fff;
+  color: #333;
+  text-align: center;
+  line-height: normal;
 }
 
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
+.el-aside .el-menu {
+  border-right: none;
 }
 
-.row {
-  display: flex;
+.el-aside .el-menu-item {
+  padding: 0 !important;
   justify-content: center;
+  font-size: 13px;
+  height: 48px;
+  line-height: 48px;
+}
+
+.net-stats {
+  padding: 0 8px 12px;
+  font-size: 12px;
+}
+
+.net-stats__divider {
+  height: 1px;
+  background: #e4e7ed;
+  margin-bottom: 8px;
+}
+
+.net-stats__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 0;
+}
+
+.net-stats__icon {
+  width: 14px;
+  text-align: center;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.net-stats__icon.up   { color: #f97316; }
+.net-stats__icon.down { color: #3b82f6; }
+.net-stats__icon.total { color: #374151; font-size: 11px; }
+
+.net-stats__val {
+  flex: 1;
+  text-align: right;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.net-stats__val.up    { color: #f97316; }
+.net-stats__val.down  { color: #3b82f6; }
+.net-stats__val.total { color: #1f2937; }
+
+.net-stats__unit {
+  color: #9ca3af;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.el-main {
+  background-color: #fff;
+  color: #333;
+}
+
+body > .el-container {
+  margin: 0;
+  padding: 0;
+}
+
+body, html {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
 }
 
 a {
@@ -205,8 +200,8 @@ h1 {
   text-align: center;
 }
 
-input,
-button {
+input:not(.el-input__inner),
+button:not(.el-button) {
   border-radius: 8px;
   border: 1px solid transparent;
   padding: 0.6em 1.2em;
@@ -231,33 +226,8 @@ button:active {
   background-color: #e8e8e8;
 }
 
-input,
-button {
+input:not(.el-input__inner),
+button:not(.el-button) {
   outline: none;
 }
-
-#greet-input {
-  margin-right: 5px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
-  }
-
-  a:hover {
-    color: #24c8db;
-  }
-
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
-  }
-  button:active {
-    background-color: #0f0f0f69;
-  }
-}
-
 </style>
