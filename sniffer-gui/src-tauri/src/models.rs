@@ -25,8 +25,9 @@ pub struct Connection {
     pub upload_speed: u64,
     pub download_speed: u64,
     
-    pub start_time: u64,      // Unix timestamp
-    pub last_active: u64,     // 最后活跃时间
+    pub start_time: u64,      // Unix timestamp (seconds)
+    pub start_time_us: u64,   // Unix timestamp (microseconds, from pcap header)
+    pub last_active: u64,     // 最后活跃时间 (seconds)
     pub status: String,       // active/closed/idle
     pub process_connection: Option<ProcessConnection>,
     pub packet_connection: Option<PacketConnection>,
@@ -79,8 +80,9 @@ pub struct ProcessConnection {
     pub remote_port: u16,
     pub state: String,
     pub pid: Option<u32>,
-    pub process_name: Option<String>,
-    pub icon: Option<String>,    // Base64 encoded icon data
-    pub start_time: Option<u64>, // Process start time in seconds since Unix epoch
-    pub fill_column: String,     // Fill column for filling remaining space
+    pub process_name: Option<String>,  // sysinfo 完整进程名
+    pub kernel_name: Option<String>,   // libproc pbi_comm（内核短名，最多15字符）
+    pub icon: Option<String>,          // Base64 encoded icon data
+    pub start_time: Option<u64>,       // Process start time in seconds since Unix epoch
+    pub fill_column: String,
 }

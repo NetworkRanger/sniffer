@@ -3,12 +3,7 @@ defineProps<{
   totalConnections: number;
   tcpConnections: number;
   udpConnections: number;
-  establishedConnections: number;
-  listenConnections: number;
-  timeWaitConnections: number;
-  closeWaitConnections: number;
-  otherConnections: number;
-  kernelConnections: number;
+  closedConnections: number;
   lastUpdate: string;
 }>();
 </script>
@@ -21,17 +16,7 @@ defineProps<{
     <span class="sep">|</span>
     <span class="item">UDP连接: <b class="udp">{{ udpConnections }}</b></span>
     <span class="sep">|</span>
-    <span class="item">已建立: <b class="established">{{ establishedConnections }}</b></span>
-    <span class="sep">|</span>
-    <span class="item">监听: <b class="listen">{{ listenConnections }}</b></span>
-    <span class="sep">|</span>
-    <span class="item">等待: <b class="wait">{{ timeWaitConnections }}</b></span>
-    <span class="sep">|</span>
-    <span class="item">关闭等待: <b class="close-wait">{{ closeWaitConnections }}</b></span>
-    <span class="sep">|</span>
-    <span class="item">其他状态: <b class="other">{{ otherConnections }}</b></span>
-    <span class="sep">|</span>
-    <span class="item">内核连接: <b class="kernel">{{ kernelConnections }}</b></span>
+    <span class="item">已关闭: <b class="established">{{ closedConnections }}</b></span>
     <span class="sep">|</span>
     <span class="item">上次更新: <b>{{ lastUpdate }}</b></span>
   </div>

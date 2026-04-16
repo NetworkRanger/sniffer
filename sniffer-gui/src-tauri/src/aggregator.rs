@@ -16,8 +16,8 @@ impl Aggregator {
     pub async fn start(mut rx: tokio::sync::mpsc::Receiver<PacketInfo>, state: Arc<AppState>) {
         info!("Aggregator started");
         let mut ticker = interval(Duration::from_secs(1));
-        let mut process_conn_ticker = interval(Duration::from_millis(50));
-        let mut process_ticker = interval(Duration::from_millis(200));
+        let mut process_conn_ticker = interval(Duration::from_millis(100));
+        let mut process_ticker = interval(Duration::from_millis(250));
         let mut last_t = ticker.tick().await;
         loop {
             select! {
@@ -176,6 +176,7 @@ impl Aggregator {
                 upload_speed: 0,
                 download_speed: 0,
                 start_time: now,
+                start_time_us: packet.timestamp_us,
                 last_active: now,
                 status: "active".to_string(),
                 process_connection,

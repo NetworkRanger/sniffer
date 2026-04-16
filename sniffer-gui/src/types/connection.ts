@@ -8,6 +8,7 @@ export interface ProcessConnection {
     state: string;
     pid: number | null;
     process_name: string | null;
+    kernel_name: string | null;  // libproc pbi_comm，内核短名（≤15字符）
     icon: string | null; // Base64 encoded icon data
     start_time: number | null; // Process start time in seconds since Unix epoch
     fill_column: string; // Fill column for filling remaining space
@@ -43,6 +44,7 @@ export interface Connection {
     upload_speed: number;
     download_speed: number;
     start_time: number;
+    start_time_us: number;   // microseconds from pcap header (tv_sec * 1_000_000 + tv_usec)
     last_active: number;
     status: string;
     process_connection: ProcessConnection | null;

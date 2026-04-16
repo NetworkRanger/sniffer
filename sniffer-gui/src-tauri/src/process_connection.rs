@@ -49,6 +49,7 @@ pub async fn get_macos_process_connections(
             let pid = proc_info.pid.clone() as u32;
             let process_info = process_map.get(&(pid as usize).into());
             let process_name = process_info.map(|p| p.name.clone());
+            let kernel_name = Some(proc_info.name.clone());
             let icon = process_info.and_then(|p| get_process_icon_by_path(&p.exe));
             let start_time = process_info.map(|p| p.start_time);
 
@@ -68,6 +69,7 @@ pub async fn get_macos_process_connections(
                 state: sock.state.clone(),
                 pid: Some(pid),
                 process_name: process_name.clone(),
+                kernel_name: kernel_name.clone(),
                 icon: icon.clone(),
                 start_time,
                 fill_column: String::new(),
@@ -77,6 +79,7 @@ pub async fn get_macos_process_connections(
                     if c.pid.is_none() {
                         c.pid = Some(pid);
                         c.process_name = process_name;
+                        c.kernel_name = kernel_name;
                         c.icon = icon;
                         c.start_time = start_time;
                     }
@@ -160,6 +163,7 @@ pub async fn get_platform_process_connections(
                     state: state.to_string(),
                     pid,
                     process_name,
+                    kernel_name: None,
                     icon,
                     start_time,
                     fill_column: String::new(),
@@ -219,6 +223,7 @@ pub async fn get_platform_process_connections(
                     state: state.to_string(),
                     pid,
                     process_name,
+                    kernel_name: None,
                     icon,
                     start_time,
                     fill_column: String::new(),

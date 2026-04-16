@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import {computed, onMounted, onUnmounted, ref} from "vue";
+import {computed, nextTick, onMounted, onUnmounted, ref, watch} from "vue";
 import {invoke} from "@tauri-apps/api/core";
 import type {Connection} from "../types/connection";
 import {filesize} from "filesize";
 import ConnectionsTable from "../components/ConnectionsTable.vue";
 import StatusBar from "../components/StatusBar.vue";
+
+const tableRef = ref<InstanceType<typeof ConnectionsTable>>();
 
 const connections = ref<Connection[]>([]);
 const activeTab = ref<'active' | 'closed'>('active');
@@ -33,10 +35,10 @@ const totalUpload = computed(() =>
     bytesize(connections.value.reduce((s, c) => s + c.bytes_sent, 0)));
 
 const activeList = computed(() =>
-    connections.value.filter(c => !c.isDelted && c.status !== 'CLOSED'));
+    connections.value.filter(c => !c.isDelted && c.status !== 'closed'));
 
 const closedList = computed(() =>
-    connections.value.filter(c => c.isDelted || c.status === 'CLOSED'));
+    connections.value.filter(c => c.isDelted || c.status === 'closed'));
 
 const statusBar = computed(() => {
   const all = connections.value;
@@ -44,26 +46,19 @@ const statusBar = computed(() => {
     totalConnections: all.length,
     tcpConnections: all.filter(c => c.protocol === 'TCP').length,
     udpConnections: all.filter(c => c.protocol === 'UDP').length,
-    establishedConnections: all.filter(c => c.status === 'ESTABLISHED').length,
-    listenConnections: all.filter(c => c.status === 'LISTEN').length,
-    timeWaitConnections: all.filter(c => c.status === 'TIME_WAIT').length,
-    closeWaitConnections: all.filter(c => c.status === 'CLOSE_WAIT').length,
-    otherConnections: all.filter(c => !['ESTABLISHED','LISTEN','TIME_WAIT','CLOSE_WAIT','CLOSED'].includes(c.status)).length,
-    kernelConnections: all.filter(c => c.process_connection?.pid === null).length,
+    closedConnections: all.filter(c => c.status !== 'active').length,
     lastUpdate: new Date().toLocaleTimeString(),
   };
 });
 
 const filteredConnections = computed(() => {
   const list = activeTab.value === 'active' ? activeList.value : closedList.value;
-  const filtered = !filter.value ? list : list.filter(c => {
+  if (!filter.value) return list;
+  return list.filter(c => {
     const host = `${c.domain || c.remote_addr}:${c.remote_port}`;
     return host.toLowerCase().includes(filter.value.toLowerCase());
   });
-  return [...filtered].sort((a, b) => b[sortField.value] - a[sortField.value]);
 });
-
-const getHost = (c: Connection) => `${c.domain || c.remote_addr}:${c.remote_port}`;
 
 const mockConnections: Connection[] = Array.from({length: 10}, (_, i) => ({
   id: `mock-${i}`,
@@ -82,8 +77,9 @@ const mockConnections: Connection[] = Array.from({length: 10}, (_, i) => ({
   upload_speed: Math.floor(Math.random() * 5000),
   download_speed: Math.floor(Math.random() * 20000),
   start_time: Math.floor(Date.now() / 1000) - 3600 + i * 300,
+  start_time_us: (Date.now() - (3600 - i * 300) * 1000) * 1000,
   last_active: Math.floor(Date.now() / 1000) - i * 10,
-  status: i < 8 ? 'ESTABLISHED' : 'CLOSED',
+  status: i < 8 ? 'active' : 'closed',
   isDelted: i >= 8,
   process_connection: {
     protocol: i % 2 === 0 ? 'TCP' : 'UDP',
@@ -94,6 +90,7 @@ const mockConnections: Connection[] = Array.from({length: 10}, (_, i) => ({
     state: i < 8 ? 'ESTABLISHED' : 'CLOSED',
     pid: 1000 + i * 100,
     process_name: ['Chrome', 'Firefox', 'Safari', 'curl', 'node', 'python3', 'git', 'npm', 'code', 'ssh'][i],
+    kernel_name: i === 4 ? 'node' : null,  // mock: node 进程 kernel_name 与 process_name 相同
     icon: null,
     start_time: Math.floor(Date.now() / 1000) - 7200,
     fill_column: '',
@@ -103,7 +100,7 @@ const mockConnections: Connection[] = Array.from({length: 10}, (_, i) => ({
 
 async function loadConnections() {
   try {
-    const result = await invoke<Connection[]>("get_connections");
+    const result = await invoke<Connection[]>("get_connections", {sortBy: sortField.value});
     connections.value = result;
   } catch (e) {
     // fallback to mock data in browser preview
@@ -111,10 +108,34 @@ async function loadConnections() {
   }
 }
 
-onMounted(() => {
+const refreshInterval = ref(3000);
+const refreshRunning = ref(true);
+const intervalOptions = [
+  {label: '1秒',  value: 1000},
+  {label: '2秒',  value: 2000},
+  {label: '3秒',  value: 3000},
+  {label: '5秒',  value: 5000},
+  {label: '10秒', value: 10000},
+];
+
+function restartTimer() {
+  if (autoRefreshTimer !== null) clearInterval(autoRefreshTimer);
+  if (refreshRunning.value) {
+    autoRefreshTimer = window.setInterval(loadConnections, refreshInterval.value);
+  }
+}
+
+watch(refreshInterval, restartTimer);
+watch(refreshRunning, restartTimer);
+
+onMounted(async () => {
   loadConnections();
-  autoRefreshTimer = window.setInterval(loadConnections, 1000);
+  restartTimer();
+  await nextTick();
 });
+
+// 切换排序时立即重新拉取
+watch(sortField, () => loadConnections());
 
 onUnmounted(() => {
   if (autoRefreshTimer !== null) clearInterval(autoRefreshTimer);
@@ -152,7 +173,36 @@ onUnmounted(() => {
       <div class="filter-wrap">
         <el-input v-model="filter" placeholder="过滤条件" clearable />
       </div>
-      <el-dropdown trigger="click" @command="(v: SortField) => sortField = v">
+
+      <!-- 自动刷新 -->
+      <div class="refresh-ctrl">
+        <span class="refresh-label">自动刷新:</span>
+        <button
+            :class="['refresh-toggle', refreshRunning ? 'refresh-toggle--running' : '']"
+            @click="refreshRunning = !refreshRunning">
+          {{ refreshRunning ? '停止' : '启动' }}
+        </button>
+        <el-dropdown trigger="click" @command="(v: number) => refreshInterval = v">
+          <button class="sort-btn">
+            {{ intervalOptions.find(o => o.value === refreshInterval)?.label }}
+            <span class="sort-arrow">&#8963;</span>
+          </button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item
+                  v-for="opt in intervalOptions"
+                  :key="opt.value"
+                  :command="opt.value">
+                <span style="display:flex;align-items:center;gap:6px;">
+                  <span style="width:14px;">{{ refreshInterval === opt.value ? '✓' : '' }}</span>
+                  {{ opt.label }}
+                </span>
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+      </div>
+      <el-dropdown v-if="false" trigger="click" @command="(v: SortField) => sortField = v">
         <button class="sort-btn">
           {{ sortLabel }} <span class="sort-arrow">&#8963;</span>
         </button>
@@ -170,10 +220,29 @@ onUnmounted(() => {
           </el-dropdown-menu>
         </template>
       </el-dropdown>
+
+      <!-- 列设置 -->
+      <el-popover
+          v-if="tableRef"
+          :visible="tableRef.showColMenu"
+          placement="bottom-end"
+          :width="160"
+          trigger="click">
+        <template #reference>
+          <button class="sort-btn" @click="tableRef!.showColMenu = !tableRef!.showColMenu" title="列设置">⊞</button>
+        </template>
+        <div class="col-menu">
+          <div v-for="col in tableRef.columns" :key="col.key" class="col-menu-item">
+            <el-checkbox v-model="col.visible" :label="col.label" />
+          </div>
+        </div>
+      </el-popover>
     </div>
 
     <!-- Table -->
-    <ConnectionsTable :connections="filteredConnections" />
+    <div class="table-area">
+      <ConnectionsTable ref="tableRef" :connections="filteredConnections"/>
+    </div>
     <StatusBar v-bind="statusBar" />
   </div>
 </template>
@@ -184,6 +253,12 @@ onUnmounted(() => {
   flex-direction: column;
   height: 100vh;
   background: #fff;
+}
+
+.table-area {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .page-header {
@@ -267,6 +342,41 @@ onUnmounted(() => {
 
 .filter-wrap {
   flex: 1;
+}
+
+.refresh-ctrl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.refresh-label {
+  font-size: 13px;
+  color: #374151;
+  white-space: nowrap;
+}
+
+.refresh-toggle {
+  padding: 4px 10px !important;
+  font-size: 13px;
+  border: 1px solid #d1d5db !important;
+  border-radius: 4px !important;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: none;
+  background: #fff;
+  color: #374151;
+}
+
+.refresh-toggle--running {
+  background: #16a34a !important;
+  border-color: #16a34a !important;
+  color: #fff;
+}
+
+.refresh-toggle--running:hover {
+  background: #15803d !important;
 }
 
 .sort-btn {

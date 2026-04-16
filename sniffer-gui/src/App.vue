@@ -2,8 +2,14 @@
 import {computed, onMounted, onUnmounted, ref} from "vue";
 import {useI18n} from "vue-i18n";
 import {invoke} from "@tauri-apps/api/core";
-import type {Connection} from "./types/connection";
 import {filesize} from "filesize";
+
+interface NetworkStats {
+  upload_speed: number;
+  download_speed: number;
+  total_bytes_sent: number;
+  total_bytes_recv: number;
+}
 
 onMounted(async () => {
   const {locale} = useI18n();
@@ -15,23 +21,13 @@ onMounted(async () => {
 onUnmounted(() => { if (timer) clearInterval(timer); });
 
 let timer: number | null = null;
-const connections = ref<Connection[]>([]);
+const stats = ref<NetworkStats>({ upload_speed: 0, download_speed: 0, total_bytes_sent: 0, total_bytes_recv: 0 });
 
 async function loadStats() {
   try {
-    connections.value = await invoke<Connection[]>("get_connections");
+    stats.value = await invoke<NetworkStats>("get_network_stats");
   } catch {}
 }
-
-const bytesize = (n: number) =>
-    filesize(n, {base: 2, standard: "jedec", round: 1}).replace(" ", "");
-
-const uploadSpeed = computed(() =>
-    connections.value.reduce((s, c) => s + c.upload_speed, 0));
-const downloadSpeed = computed(() =>
-    connections.value.reduce((s, c) => s + c.download_speed, 0));
-const totalBytes = computed(() =>
-    connections.value.reduce((s, c) => s + c.bytes_sent + c.bytes_recv, 0));
 
 const fmtSpeed = (n: number) => {
   const s = filesize(n, {base: 2, standard: "jedec", round: 2, output: "object"}) as any;
@@ -45,34 +41,33 @@ const fmtTotal = (n: number) => {
 
 <template>
   <el-container style="height: 100vh;">
-    <el-aside width="80px" style="background: white; height: 100vh; min-width: 80px; display: flex; flex-direction: column;">
-      <el-menu style="flex: 1;">
-        <router-link to="/index">
-          <el-menu-item index="1">首页</el-menu-item>
-        </router-link>
-        <router-link to="/connection">
-          <el-menu-item index="2">连接</el-menu-item>
-        </router-link>
-        <router-link to="/log">
-          <el-menu-item index="3">日志</el-menu-item>
-        </router-link>
+    <el-aside width="100px" style="background: white; height: 100vh; min-width: 80px; display: flex; flex-direction: column;">
+      <el-menu style="flex: 1;" router>
+        <el-menu-item index="/index">首页</el-menu-item>
+        <el-menu-item index="/connection">连接</el-menu-item>
+        <el-menu-item index="/log">日志</el-menu-item>
       </el-menu>
       <div class="net-stats">
         <div class="net-stats__divider"></div>
         <div class="net-stats__row">
           <span class="net-stats__icon up">↑</span>
-          <span class="net-stats__val up">{{ fmtSpeed(uploadSpeed).val }}</span>
-          <span class="net-stats__unit">{{ fmtSpeed(uploadSpeed).unit }}</span>
+          <span class="net-stats__val up">{{ fmtSpeed(stats.upload_speed).val }}</span>
+          <span class="net-stats__unit">{{ fmtSpeed(stats.upload_speed).unit }}</span>
         </div>
         <div class="net-stats__row">
           <span class="net-stats__icon down">↓</span>
-          <span class="net-stats__val down">{{ fmtSpeed(downloadSpeed).val }}</span>
-          <span class="net-stats__unit">{{ fmtSpeed(downloadSpeed).unit }}</span>
+          <span class="net-stats__val down">{{ fmtSpeed(stats.download_speed).val }}</span>
+          <span class="net-stats__unit">{{ fmtSpeed(stats.download_speed).unit }}</span>
         </div>
         <div class="net-stats__row">
-          <span class="net-stats__icon total">⊕</span>
-          <span class="net-stats__val total">{{ fmtTotal(totalBytes).val }}</span>
-          <span class="net-stats__unit">{{ fmtTotal(totalBytes).unit }}</span>
+          <span class="net-stats__icon total">↑</span>
+          <span class="net-stats__val total">{{ fmtTotal(stats.total_bytes_sent).val }}</span>
+          <span class="net-stats__unit">{{ fmtTotal(stats.total_bytes_sent).unit }}</span>
+        </div>
+        <div class="net-stats__row">
+          <span class="net-stats__icon total">↓</span>
+          <span class="net-stats__val total">{{ fmtTotal(stats.total_bytes_recv).val }}</span>
+          <span class="net-stats__unit">{{ fmtTotal(stats.total_bytes_recv).unit }}</span>
         </div>
       </div>
     </el-aside>

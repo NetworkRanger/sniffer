@@ -28,6 +28,7 @@ pub struct PacketInfo {
     pub protocol: String,
     pub length: u32,
     pub is_outgoing: bool, // 相对于本机
+    pub timestamp_us: u64, // pcap header: tv_sec * 1_000_000 + tv_usec
 }
 
 impl CaptureEngine {
@@ -84,25 +85,27 @@ impl CaptureEngine {
 
         while *state.running.blocking_read() {
             if let Ok(packet) = cap.next_packet() {
-                let runtime = tokio::runtime::Runtime::new().unwrap();
-                runtime.block_on(async {
-                    let _ = self.pcap_tx.send((*packet.header, packet.data.to_vec())).await;
-                });
+                let timestamp_us = packet.header.ts.tv_sec as u64 * 1_000_000
+                    + packet.header.ts.tv_usec as u64;
+                let _ = self.pcap_tx.send_blocking((*packet.header, packet.data.to_vec()));
                 let result = panic::catch_unwind(|| {
-                    if let Some(info) = parse_packet(packet.data) {
-                        trace!("info: {:?}", info);
-                        let _ = self.tx.try_send(info).unwrap(); // 发送到聚合器
-                    }
+                    parse_packet(packet.data, timestamp_us)
                 });
-                if result.is_err() {
-                    error!("packet parse error: {:?}", result);
+                match result {
+                    Ok(Some(info)) => {
+                        if let Err(e) = self.tx.try_send(info) {
+                            debug!("channel full, dropping packet: {}", e);
+                        }
+                    }
+                    Err(e) => error!("packet parse error: {:?}", e),
+                    _ => {}
                 }
             }
         }
     }
 }
 
-fn parse_packet(packet: &[u8]) -> Option<PacketInfo> {
+fn parse_packet(packet: &[u8], timestamp_us: u64) -> Option<PacketInfo> {
     let eth = EthernetPacket::new(packet)?;
 
     // 解析 IP 层
@@ -140,6 +143,7 @@ fn parse_packet(packet: &[u8]) -> Option<PacketInfo> {
                         protocol: "TCP".to_string(),
                         length: length,
                         is_outgoing,
+                        timestamp_us,
                     })
                 }
                 pnet::packet::ip::IpNextHeaderProtocols::Udp => {
@@ -157,6 +161,7 @@ fn parse_packet(packet: &[u8]) -> Option<PacketInfo> {
                         protocol: "UDP".to_string(),
                         length: length,
                         is_outgoing,
+                        timestamp_us,
                     })
                 }
                 _ => None,

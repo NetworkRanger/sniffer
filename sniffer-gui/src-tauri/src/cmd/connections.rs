@@ -1,0 +1,50 @@
+use std::sync::Arc;
+use tauri::State;
+use tracing::info;
+use crate::models::{AppState, Connection};
+
+#[tauri::command]
+pub async fn get_connections(
+    state: State<'_, Arc<AppState>>,
+    limit: Option<usize>,
+    sort_by: Option<String>,
+) -> Result<Vec<Connection>, String> {
+    let conns = state.connections.read().await;
+    let mut list: Vec<Connection> = conns.values().cloned().collect();
+
+    match sort_by.as_deref().unwrap_or("speed") {
+        "last_active"    => list.sort_by(|a, b| b.last_active.cmp(&a.last_active)),
+        "bytes_sent"     => list.sort_by(|a, b| b.bytes_sent.cmp(&a.bytes_sent)),
+        "bytes_recv"     => list.sort_by(|a, b| b.bytes_recv.cmp(&a.bytes_recv)),
+        "upload_speed"   => list.sort_by(|a, b| b.upload_speed.cmp(&a.upload_speed)),
+        "download_speed" => list.sort_by(|a, b| b.download_speed.cmp(&a.download_speed)),
+        _ => {
+            list.sort_by(|a, b| {
+                let speed_a = a.upload_speed + a.download_speed;
+                let speed_b = b.upload_speed + b.download_speed;
+                let order = speed_b.cmp(&speed_a);
+                if order.is_eq() {
+                    let total_a = a.bytes_sent + a.bytes_recv;
+                    let total_b = b.bytes_sent + b.bytes_recv;
+                    let order = total_b.cmp(&total_a);
+                    if order.is_eq() {
+                        return b.last_active.cmp(&a.last_active);
+                    }
+                    return order;
+                }
+                order
+            });
+        }
+    }
+
+    let limit = limit.unwrap_or(50);
+    let result: Vec<Connection> = list.into_iter().take(limit).collect();
+    info!("result len: {}", result.len());
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn stop_capture(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    *state.running.write().await = false;
+    Ok(())
+}
