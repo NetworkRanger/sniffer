@@ -44,4 +44,6 @@ pcap-file = "1.1"
 async-channel = "2.5.0"
 libproc = "0.14.11"
 tracing-appender = "0.2"
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
 

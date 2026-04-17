@@ -10,7 +10,7 @@ use sniffer::utils::get_mac_by_name;
 use sniffer::utils::registry::Registry;
 use std::sync::Arc;
 use std::{net, panic};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 #[derive(Debug)]
 pub struct CaptureEngine {
@@ -94,7 +94,7 @@ impl CaptureEngine {
                 match result {
                     Ok(Some(info)) => {
                         if let Err(e) = self.tx.try_send(info) {
-                            debug!("channel full, dropping packet: {}", e);
+                            warn!("channel full, dropping packet: {}", e);
                         }
                     }
                     Err(e) => error!("packet parse error: {:?}", e),

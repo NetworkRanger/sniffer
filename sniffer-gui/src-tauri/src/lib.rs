@@ -7,6 +7,8 @@ mod pcap_writer;
 mod platform;
 mod process;
 mod cmd;
+mod log_layer;
+mod log_ws;
 
 extern crate sniffer;
 
@@ -20,6 +22,7 @@ use models::AppState;
 use tracing_subscriber::fmt::time::OffsetTime;
 use time::macros::{format_description, offset};
 use tokio::runtime::Runtime;
+use tokio::sync::broadcast;
 use tracing_subscriber::EnvFilter;
 use sniffer::config::Config;
 use crate::capture::PacketInfo;
@@ -59,7 +62,7 @@ async fn start_capture(state: Arc<AppState>) -> Result<(), String> {
     Ok(())
 }
 
-fn init_logging() -> WorkerGuard {
+fn init_logging(ws_tx: broadcast::Sender<String>, history: log_ws::LogHistory) -> WorkerGuard {
     let cache_dir = dirs::home_dir().map(|home| home.join(".sniffer"))
         .unwrap().to_string_lossy().into_owned();
 
@@ -81,11 +84,15 @@ fn init_logging() -> WorkerGuard {
         .with_timer(timer)
         .with_writer(file_writer)
         .with_ansi(false)
-        .with_filter(EnvFilter::new("trace"));
+        .with_filter(EnvFilter::new("info"));
+
+    let broadcast_layer = log_layer::BroadcastLayer { tx: ws_tx, history }
+        .with_filter(EnvFilter::new("debug"));
 
     tracing_subscriber::registry()
         .with(file_layer)
         .with(stdout_layer)
+        .with(broadcast_layer)
         .init();
 
     guard
@@ -101,7 +108,22 @@ pub fn run() {
         running: Arc::new(tokio::sync::RwLock::new(false)),
     });
 
-    let _guard = init_logging();
+    // broadcast channel: 日志推送给 WebSocket 客户端
+    let (ws_tx, _) = broadcast::channel::<String>(4096);
+    let ws_tx_clone = ws_tx.clone();
+    let history = log_ws::new_history();
+    let history_clone = history.clone();
+
+    let _guard = init_logging(ws_tx, history);
+
+    // 启动 WebSocket 日志服务
+    thread::Builder::new()
+        .name("log_ws".to_string())
+        .spawn(move || {
+            let rt = Runtime::new().unwrap();
+            rt.block_on(log_ws::start_log_ws(ws_tx_clone, history_clone));
+        })
+        .expect("failed to start log ws");
 
     let state_clone = state.clone();
     thread::spawn(move || {
