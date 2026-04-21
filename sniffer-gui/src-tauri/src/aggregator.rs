@@ -22,7 +22,11 @@ impl Aggregator {
         loop {
             select! {
                 Some(packet) = rx.recv() => {
-                     Self::update_connection(&state, packet).await;
+                    Self::update_connection(&state, packet).await;
+                    // Drain all buffered packets before yielding to timers
+                    while let Ok(packet) = rx.try_recv() {
+                        Self::update_connection(&state, packet).await;
+                    }
                 }
                 _ = process_conn_ticker.tick() => {
                     let _ = get_process_connections(&state).await;
@@ -151,36 +155,56 @@ impl Aggregator {
                 conn.status = "active".to_string();
                 conn.process_connection = conn.clone().process_connection.or(process_connection.clone());
                 conn.packet_connection = packet_connection.clone();
+                if conn.domain.is_none() {
+                    if let Some(ref pc) = packet_connection {
+                        conn.domain = pc.domain.clone();
+                        conn.path = pc.path.clone();
+                        if pc.domain.is_some() {
+                            conn.protocol = pc.protocol.clone();
+                        }
+                    }
+                }
             })
-            .or_insert(Connection {
-                id,
-                local_addr,
-                local_port,
-                remote_addr,
-                remote_port,
-                protocol: packet.protocol,
-                bytes_sent: if packet.is_outgoing {
-                    packet.length as u64
+            .or_insert_with(|| {
+                let domain = packet_connection.as_ref().and_then(|pc| pc.domain.clone());
+                let path = packet_connection.as_ref().and_then(|pc| pc.path.clone());
+                let protocol = if domain.is_some() {
+                    packet_connection.as_ref().map(|pc| pc.protocol.clone()).unwrap_or(packet.protocol)
                 } else {
-                    0
-                },
-                bytes_recv: if packet.is_outgoing {
-                    0
-                } else {
-                    packet.length as u64
-                },
-                packets_sent: if packet.is_outgoing { 1 } else { 0 },
-                packets_recv: if packet.is_outgoing { 0 } else { 1 },
-                last_bytes_sent: 0,
-                last_bytes_recv: 0,
-                upload_speed: 0,
-                download_speed: 0,
-                start_time: now,
-                start_time_us: packet.timestamp_us,
-                last_active: now,
-                status: "active".to_string(),
-                process_connection,
-                packet_connection,
+                    packet.protocol
+                };
+                Connection {
+                    id,
+                    local_addr,
+                    local_port,
+                    remote_addr,
+                    remote_port,
+                    protocol,
+                    domain,
+                    path,
+                    bytes_sent: if packet.is_outgoing {
+                        packet.length as u64
+                    } else {
+                        0
+                    },
+                    bytes_recv: if packet.is_outgoing {
+                        0
+                    } else {
+                        packet.length as u64
+                    },
+                    packets_sent: if packet.is_outgoing { 1 } else { 0 },
+                    packets_recv: if packet.is_outgoing { 0 } else { 1 },
+                    last_bytes_sent: 0,
+                    last_bytes_recv: 0,
+                    upload_speed: 0,
+                    download_speed: 0,
+                    start_time: now,
+                    start_time_us: packet.timestamp_us,
+                    last_active: now,
+                    status: "active".to_string(),
+                    process_connection,
+                    packet_connection,
+                }
             });
     }
 
@@ -214,6 +238,18 @@ impl Aggregator {
 
             conn.last_bytes_sent = conn.bytes_sent;
             conn.last_bytes_recv = conn.bytes_recv;
+
+            // 补查未关联进程的连接
+            if conn.process_connection.is_none() {
+                let key = ConnectionKey {
+                    protocol: conn.protocol.to_lowercase(),
+                    local_addr: conn.local_addr.clone(),
+                    local_port: conn.local_port,
+                    remote_addr: conn.remote_addr.clone(),
+                    remote_port: conn.remote_port,
+                };
+                conn.process_connection = Self::get_process_connection_by_key(state, key).await;
+            }
         }
 
         // 计算速率（需要历史数据，简化处理）

@@ -13,6 +13,8 @@ pub struct Connection {
     pub remote_addr: String,
     pub remote_port: u16,
     pub protocol: String,     // TCP/UDP/ICMP
+    pub domain: Option<String>,
+    pub path: Option<String>,
     
     pub bytes_sent: u64,      // 本连接发送字节
     pub bytes_recv: u64,      // 本连接接收字节

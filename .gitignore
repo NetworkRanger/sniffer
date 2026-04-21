@@ -3,6 +3,8 @@ target/
 *.pcap
 *.pcapng
 
+data/
+
 # Logs
 logs
 *.log

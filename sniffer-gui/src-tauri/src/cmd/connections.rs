@@ -48,3 +48,8 @@ pub async fn stop_capture(state: State<'_, Arc<AppState>>) -> Result<(), String>
     *state.running.write().await = false;
     Ok(())
 }
+
+#[tauri::command]
+pub async fn get_capture_status(state: State<'_, Arc<AppState>>) -> Result<bool, String> {
+    Ok(*state.running.read().await)
+}

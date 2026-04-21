@@ -11,6 +11,7 @@ const tableRef = ref<InstanceType<typeof ConnectionsTable>>();
 const connections = ref<Connection[]>([]);
 const activeTab = ref<'active' | 'closed'>('active');
 const filter = ref('');
+const capturing = ref(true); // 启动时默认抓包中
 
 type SortField = 'last_active' | 'bytes_sent' | 'bytes_recv' | 'upload_speed' | 'download_speed';
 const sortField = ref<SortField>('last_active');
@@ -108,6 +109,23 @@ async function loadConnections() {
   }
 }
 
+async function loadCaptureStatus() {
+  try {
+    capturing.value = await invoke<boolean>("get_capture_status");
+  } catch (_) {}
+}
+
+async function toggleCapture() {
+  try {
+    if (capturing.value) {
+      await invoke("stop_capture");
+    } else {
+      await invoke("start_capture");
+    }
+    await loadCaptureStatus();
+  } catch (_) {}
+}
+
 const refreshInterval = ref(3000);
 const refreshRunning = ref(true);
 const intervalOptions = [
@@ -130,6 +148,7 @@ watch(refreshRunning, restartTimer);
 
 onMounted(async () => {
   loadConnections();
+  loadCaptureStatus();
   restartTimer();
   await nextTick();
 });
@@ -172,6 +191,15 @@ onUnmounted(() => {
       </div>
       <div class="filter-wrap">
         <el-input v-model="filter" placeholder="过滤条件" clearable />
+      </div>
+
+      <!-- 抓包控制 -->
+      <div class="capture-ctrl">
+        <button
+            :class="['capture-btn', capturing ? 'capture-btn--running' : 'capture-btn--stopped']"
+            @click="toggleCapture">
+          {{ capturing ? '⏹ 停止抓包' : '▶ 开始抓包' }}
+        </button>
       </div>
 
       <!-- 自动刷新 -->
@@ -402,6 +430,42 @@ onUnmounted(() => {
 .sort-arrow {
   font-size: 11px;
   color: #9ca3af;
+}
+
+.capture-ctrl {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.capture-btn {
+  padding: 4px 12px !important;
+  font-size: 13px;
+  border: 1px solid #d1d5db !important;
+  border-radius: 4px !important;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: none;
+}
+
+.capture-btn--running {
+  background: #ef4444 !important;
+  border-color: #ef4444 !important;
+  color: #fff;
+}
+
+.capture-btn--running:hover {
+  background: #dc2626 !important;
+}
+
+.capture-btn--stopped {
+  background: #3b82f6 !important;
+  border-color: #3b82f6 !important;
+  color: #fff;
+}
+
+.capture-btn--stopped:hover {
+  background: #2563eb !important;
 }
 
 

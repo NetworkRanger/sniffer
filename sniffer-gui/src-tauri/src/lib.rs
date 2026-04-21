@@ -25,6 +25,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::broadcast;
 use tracing_subscriber::EnvFilter;
 use sniffer::config::Config;
+use tauri::State;
 use crate::capture::PacketInfo;
 use crate::process::get_processes;
 use crate::process_connection::get_process_connections;
@@ -34,11 +35,10 @@ use std::io;
 use tracing_appender::non_blocking::WorkerGuard;
 
 use cmd::stats::get_network_stats;
-use cmd::connections::{get_connections, stop_capture};
+use cmd::connections::{get_connections, stop_capture, get_capture_status};
 use cmd::logs::get_logs;
 
-#[tauri::command]
-async fn start_capture(state: Arc<AppState>) -> Result<(), String> {
+async fn do_start_capture(state: Arc<AppState>) -> Result<(), String> {
     *state.running.write().await = true;
 
     let (tx, rx) = tokio::sync::mpsc::channel::<PacketInfo>(10000);
@@ -60,6 +60,14 @@ async fn start_capture(state: Arc<AppState>) -> Result<(), String> {
     aggregator::Aggregator::start(rx, state).await;
     let _ = pcap_handle.join().ok();
     Ok(())
+}
+
+#[tauri::command]
+async fn start_capture(state: State<'_, Arc<AppState>>) -> Result<(), String> {
+    if *state.running.read().await {
+        return Err("capture already running".to_string());
+    }
+    do_start_capture(state.inner().clone()).await
 }
 
 fn init_logging(ws_tx: broadcast::Sender<String>, history: log_ws::LogHistory) -> WorkerGuard {
@@ -134,7 +142,7 @@ pub fn run() {
         let _result = rt.block_on(async move {
             let _ = get_processes(&state_clone).await.unwrap();
             let _ = get_process_connections(&state_clone).await.unwrap();
-            let _ = start_capture(state_clone).await;
+            let _ = do_start_capture(state_clone).await;
         });
     });
 
@@ -144,7 +152,9 @@ pub fn run() {
             get_network_stats,
             get_connections,
             get_logs,
+            start_capture,
             stop_capture,
+            get_capture_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
