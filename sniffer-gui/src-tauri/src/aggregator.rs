@@ -288,7 +288,12 @@ impl Aggregator {
                 }
             }
 
-            // 计算速率
+            // 计算速率（用增量而非累计值）
+            let mut history = state.stats_history.write().await;
+            let (last_sent, last_recv) = history.last()
+                .map(|s| (s.total_bytes_sent, s.total_bytes_recv))
+                .unwrap_or((0, 0));
+
             let stats = NetworkStats {
                 timestamp: now,
                 total_bytes_sent: total_sent,
@@ -296,11 +301,10 @@ impl Aggregator {
                 total_packets,
                 active_connections: connections.len(),
                 top_connections: connections.into_iter().take(10).collect(),
-                upload_speed: total_sent * 1000 / millis,
-                download_speed: total_recv * 1000 / millis,
+                upload_speed: total_sent.saturating_sub(last_sent) * 1000 / millis,
+                download_speed: total_recv.saturating_sub(last_recv) * 1000 / millis,
             };
 
-            let mut history = state.stats_history.write().await;
             history.push(stats);
             if history.len() > 300 {
                 history.remove(0);
