@@ -9,7 +9,7 @@ pub async fn get_processes(state: &Arc<AppState>) -> Result<HashMap<Pid, Process
     for process in system.processes().values() {
         processes.insert(process.pid(), ProcessInfo{
             name: process.name().to_string(),
-            exe: process.exe().unwrap().to_string_lossy().parse().unwrap(),
+            exe: process.exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
             start_time: process.start_time(),
         });
     }
