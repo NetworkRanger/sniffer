@@ -92,7 +92,7 @@ fn init_logging(ws_tx: broadcast::Sender<String>, history: log_ws::LogHistory) -
         .with_timer(timer)
         .with_writer(file_writer)
         .with_ansi(false)
-        .with_filter(EnvFilter::new("info"));
+        .with_filter(EnvFilter::new("debug"));
 
     let broadcast_layer = log_layer::BroadcastLayer { tx: ws_tx, history }
         .with_filter(EnvFilter::new("debug"));

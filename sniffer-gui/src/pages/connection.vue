@@ -68,6 +68,7 @@ const mockConnections: Connection[] = Array.from({length: 10}, (_, i) => ({
   remote_addr: `203.0.113.${i + 1}`,
   remote_port: [80, 443, 8080, 5228, 8838][i % 5],
   protocol: i % 2 === 0 ? 'TCP' : 'UDP',
+  app_protocol: i % 2 === 0 ? 'https' : 'udp',
   domain: [`www.google.com`, `mtalk.google.com`, `api.github.com`, `www.baidu.com`, `cdn.jsdelivr.net`,
     `fonts.googleapis.com`, `www.msftconnecttest.com`, `update.microsoft.com`, `ocsp.apple.com`, `push.apple.com`][i],
   path: i % 3 === 0 ? '/api/v1/data' : null,

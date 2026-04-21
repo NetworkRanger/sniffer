@@ -143,7 +143,7 @@ defineExpose({columns, showColMenu});
           <template #default="{ row }">
             <div class="traffic-cell" style="align-items:center;">
               <span class="traffic-bps">{{ row.protocol }}</span>
-              <span class="traffic-total">{{ row.packet_connection?.protocol || '-' }}</span>
+              <span class="traffic-total">{{ row.app_protocol || '-' }}</span>
             </div>
           </template>
         </el-table-column>

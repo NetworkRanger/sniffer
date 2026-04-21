@@ -13,6 +13,7 @@ pub struct Connection {
     pub remote_addr: String,
     pub remote_port: u16,
     pub protocol: String,     // TCP/UDP/ICMP
+    pub app_protocol: String,  // 应用层协议: tcp/udp/http/https/quic/h2c
     pub domain: Option<String>,
     pub path: Option<String>,
     

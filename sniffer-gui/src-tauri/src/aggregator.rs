@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::select;
 use tokio::time::{interval, Duration};
-use tracing::{info};
+use tracing::{debug, info};
 use sniffer::utils::registry::Registry;
 use crate::process_connection::{get_process_connections};
 use sniffer::packet::Connection as PacketConnection;
@@ -23,9 +23,15 @@ impl Aggregator {
             select! {
                 Some(packet) = rx.recv() => {
                     Self::update_connection(&state, packet).await;
-                    // Drain all buffered packets before yielding to timers
-                    while let Ok(packet) = rx.try_recv() {
-                        Self::update_connection(&state, packet).await;
+                    let mut drained = 0;
+                    while drained < 64 {
+                        match rx.try_recv() {
+                            Ok(packet) => {
+                                Self::update_connection(&state, packet).await;
+                                drained += 1;
+                            }
+                            Err(_) => break,
+                        }
                     }
                 }
                 _ = process_conn_ticker.tick() => {
@@ -48,6 +54,9 @@ impl Aggregator {
     async fn get_process_connection_by_key(state: &Arc<AppState>, key: ConnectionKey) -> Option<ProcessConnection> {
         let process_connections = state.process_connections.read().await;
         if let Some(process_connection) = process_connections.get(&key) {
+            debug!("[process_match] exact match: {}://{}:{} -> {}:{}, pid={:?}",
+                key.protocol, key.local_addr, key.local_port, key.remote_addr, key.remote_port,
+                process_connection.pid);
             return Some(process_connection.to_owned());
         }
         if let Some(key) = process_connections.keys().into_iter().filter(|k| {
@@ -55,7 +64,10 @@ impl Aggregator {
                 && k.remote_addr == key.remote_addr
                 && k.remote_port == key.remote_port
         }).next() {
-            return process_connections.get(&key).cloned();
+            let pc = process_connections.get(&key).cloned();
+            debug!("[process_match] remote match: {}:{}, pid={:?}",
+                key.remote_addr, key.remote_port, pc.as_ref().and_then(|p| p.pid));
+            return pc;
         }
         if let Some(key) = process_connections.keys().into_iter().filter(|k| {
             k.protocol == key.protocol
@@ -104,12 +116,14 @@ impl Aggregator {
             return process_connections.get(&key).cloned();
         }
 
+        debug!("[process_match] no match: {}://{}:{} -> {}:{}",
+            key.protocol, key.local_addr, key.local_port, key.remote_addr, key.remote_port);
+
         None
     }
 
     async fn update_connection(state: &Arc<AppState>, packet: PacketInfo) {
         let ip = Registry::get::<String>("ip").unwrap();
-        let mut conns = state.connections.write().await;
 
         let mut local_addr = packet.dst_ip.clone();
         let mut local_port = packet.dst_port;
@@ -126,14 +140,6 @@ impl Aggregator {
             packet.protocol.to_lowercase(),
             local_addr, local_port, remote_addr, remote_port
         );
-        let key = ConnectionKey {
-            protocol: packet.protocol.to_lowercase(),
-            local_addr: local_addr.clone(),
-            local_port: local_port.clone(),
-            remote_addr: remote_addr.clone(),
-            remote_port: remote_port.clone(),
-        };
-        let process_connection = Self::get_process_connection_by_key(state, key).await;
         let packet_connection = Registry::get::<PacketConnection>(id.clone());
 
         let now = SystemTime::now()
@@ -141,6 +147,30 @@ impl Aggregator {
             .unwrap()
             .as_secs();
 
+        // 先检查连接是否已存在且已有进程信息，避免不必要的 process_connections 锁
+        let needs_process_lookup = {
+            let conns = state.connections.read().await;
+            match conns.get(&id) {
+                Some(conn) => conn.process_connection.is_none(),
+                None => true,
+            }
+        };
+
+        let process_connection = if needs_process_lookup {
+            let key = ConnectionKey {
+                protocol: packet.protocol.to_lowercase(),
+                local_addr: local_addr.clone(),
+                local_port,
+                remote_addr: remote_addr.clone(),
+                remote_port,
+            };
+            debug!("[update_conn] process lookup for {}", id);
+            Self::get_process_connection_by_key(state, key).await
+        } else {
+            None
+        };
+
+        let mut conns = state.connections.write().await;
         conns
             .entry(id.clone())
             .and_modify(|conn| {
@@ -153,14 +183,16 @@ impl Aggregator {
                 }
                 conn.last_active = now;
                 conn.status = "active".to_string();
-                conn.process_connection = conn.clone().process_connection.or(process_connection.clone());
+                if conn.process_connection.is_none() {
+                    conn.process_connection = process_connection.clone();
+                }
                 conn.packet_connection = packet_connection.clone();
                 if conn.domain.is_none() {
                     if let Some(ref pc) = packet_connection {
                         conn.domain = pc.domain.clone();
                         conn.path = pc.path.clone();
                         if pc.domain.is_some() {
-                            conn.protocol = pc.protocol.clone();
+                            conn.app_protocol = pc.protocol.clone();
                         }
                     }
                 }
@@ -168,10 +200,11 @@ impl Aggregator {
             .or_insert_with(|| {
                 let domain = packet_connection.as_ref().and_then(|pc| pc.domain.clone());
                 let path = packet_connection.as_ref().and_then(|pc| pc.path.clone());
-                let protocol = if domain.is_some() {
-                    packet_connection.as_ref().map(|pc| pc.protocol.clone()).unwrap_or(packet.protocol)
+                let app_protocol = if domain.is_some() {
+                    packet_connection.as_ref().map(|pc| pc.protocol.clone())
+                        .unwrap_or_else(|| packet.protocol.to_lowercase())
                 } else {
-                    packet.protocol
+                    packet.protocol.to_lowercase()
                 };
                 Connection {
                     id,
@@ -179,7 +212,8 @@ impl Aggregator {
                     local_port,
                     remote_addr,
                     remote_port,
-                    protocol,
+                    protocol: packet.protocol,
+                    app_protocol,
                     domain,
                     path,
                     bytes_sent: if packet.is_outgoing {
@@ -210,66 +244,90 @@ impl Aggregator {
 
     async fn calculate_stats(state: &Arc<AppState>, millis: u64) {
         let millis = if millis == 0 { 1000 } else { millis };
-        let mut conns = state.connections.write().await;
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
 
-        let mut total_sent = 0u64;
-        let mut total_recv = 0u64;
-        let mut total_packets = 0u32;
+        // 第一阶段：收集需要补查进程的连接 key，同时计算速率
+        let mut pending_lookups: Vec<(String, ConnectionKey)> = Vec::new();
+        {
+            let mut conns = state.connections.write().await;
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
 
-        // 收集连接并排序（按总流量）
-        let mut connections: Vec<Connection> = conns.values().cloned().collect();
-        connections.sort_by(|a, b| {
-            let a_total = a.bytes_sent + a.bytes_recv;
-            let b_total = b.bytes_sent + b.bytes_recv;
-            b_total.cmp(&a_total) // 降序
-        });
+            let mut total_sent = 0u64;
+            let mut total_recv = 0u64;
+            let mut total_packets = 0u32;
 
-        for (_id, conn ) in conns.iter_mut() {
-            total_sent += conn.bytes_sent;
-            total_recv += conn.bytes_recv;
-            total_packets += conn.packets_sent + conn.packets_recv;
+            // 收集连接并排序（按总流量）
+            let mut connections: Vec<Connection> = conns.values().cloned().collect();
+            connections.sort_by(|a, b| {
+                let a_total = a.bytes_sent + a.bytes_recv;
+                let b_total = b.bytes_sent + b.bytes_recv;
+                b_total.cmp(&a_total) // 降序
+            });
 
-            conn.upload_speed = (conn.bytes_sent - conn.last_bytes_sent) * 1000 / millis;
-            conn.download_speed = (conn.bytes_recv - conn.last_bytes_recv) * 1000 / millis;
+            for (_id, conn) in conns.iter_mut() {
+                total_sent += conn.bytes_sent;
+                total_recv += conn.bytes_recv;
+                total_packets += conn.packets_sent + conn.packets_recv;
 
-            conn.last_bytes_sent = conn.bytes_sent;
-            conn.last_bytes_recv = conn.bytes_recv;
+                conn.upload_speed = (conn.bytes_sent - conn.last_bytes_sent) * 1000 / millis;
+                conn.download_speed = (conn.bytes_recv - conn.last_bytes_recv) * 1000 / millis;
 
-            // 补查未关联进程的连接
-            if conn.process_connection.is_none() {
-                let key = ConnectionKey {
-                    protocol: conn.protocol.to_lowercase(),
-                    local_addr: conn.local_addr.clone(),
-                    local_port: conn.local_port,
-                    remote_addr: conn.remote_addr.clone(),
-                    remote_port: conn.remote_port,
-                };
-                conn.process_connection = Self::get_process_connection_by_key(state, key).await;
+                conn.last_bytes_sent = conn.bytes_sent;
+                conn.last_bytes_recv = conn.bytes_recv;
+
+                if conn.process_connection.is_none() {
+                    pending_lookups.push((conn.id.clone(), ConnectionKey {
+                        protocol: conn.protocol.to_lowercase(),
+                        local_addr: conn.local_addr.clone(),
+                        local_port: conn.local_port,
+                        remote_addr: conn.remote_addr.clone(),
+                        remote_port: conn.remote_port,
+                    }));
+                }
             }
-        }
 
-        // 计算速率（需要历史数据，简化处理）
-        let stats = NetworkStats {
-            timestamp: now,
-            total_bytes_sent: total_sent,
-            total_bytes_recv: total_recv,
-            total_packets,
-            active_connections: connections.len(),
-            top_connections: connections.into_iter().take(10).collect(),
-            upload_speed: total_sent * 1000 / millis,
-            download_speed: total_recv * 1000 / millis,
-        };
+            // 计算速率
+            let stats = NetworkStats {
+                timestamp: now,
+                total_bytes_sent: total_sent,
+                total_bytes_recv: total_recv,
+                total_packets,
+                active_connections: connections.len(),
+                top_connections: connections.into_iter().take(10).collect(),
+                upload_speed: total_sent * 1000 / millis,
+                download_speed: total_recv * 1000 / millis,
+            };
 
-        let mut history = state.stats_history.write().await;
-        history.push(stats);
+            let mut history = state.stats_history.write().await;
+            history.push(stats);
+            if history.len() > 300 {
+                history.remove(0);
+            }
+        } // connections write lock dropped here
 
-        // 只保留最近 5 分钟（300 秒）的历史
-        if history.len() > 300 {
-            history.remove(0);
+        // 第二阶段：补查进程信息（不持有 connections 锁）
+        if !pending_lookups.is_empty() {
+            debug!("[backfill] {} connections need process lookup", pending_lookups.len());
+            let mut results: Vec<(String, ProcessConnection)> = Vec::new();
+            for (id, key) in pending_lookups {
+                if let Some(pc) = Self::get_process_connection_by_key(state, key).await {
+                    debug!("[backfill] found process for {}: pid={:?}, name={:?}",
+                        id, pc.pid, pc.process_name);
+                    results.push((id, pc));
+                }
+            }
+            if !results.is_empty() {
+                let mut conns = state.connections.write().await;
+                for (id, pc) in results {
+                    if let Some(conn) = conns.get_mut(&id) {
+                        if conn.process_connection.is_none() {
+                            conn.process_connection = Some(pc);
+                        }
+                    }
+                }
+            }
         }
     }
 }

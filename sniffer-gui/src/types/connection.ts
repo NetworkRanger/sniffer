@@ -35,6 +35,7 @@ export interface Connection {
     remote_addr: string;
     remote_port: number;
     protocol: string;
+    app_protocol: string;
     domain: string | null;
     path: string | null;
     bytes_sent: number;
