@@ -2,8 +2,8 @@ use crate::cache::get_process_icon_by_path;
 use crate::models::{AppState, ConnectionKey, ProcessConnection};
 use netstat2::{get_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState};
 use std::collections::HashMap;
-use std::env::consts;
 use std::sync::Arc;
+#[cfg(target_os = "macos")]
 use crate::platform::macos::process_connection::MacOSNetMonitor;
 
 // 将 netstat2 的 TCP 状态转换为字符串
@@ -26,18 +26,21 @@ fn tcp_state_to_string(state: TcpState) -> &'static str {
 }
 
 // ==================== 网络连接相关函数 ====================
-
 pub async fn get_process_connections(
     state: &Arc<AppState>,
-) -> Result<HashMap<ConnectionKey, ProcessConnection>, String>
-{
-    match consts::OS {
-        "macos" => get_macos_process_connections(state).await,
-        _ => get_platform_process_connections(state).await,
+) -> Result<HashMap<ConnectionKey, ProcessConnection>, String> {
+    #[cfg(target_os = "macos")]
+    {
+        get_macos_process_connections(state).await
+    }
+    #[cfg(not(any(target_os = "macos")))]
+    {
+        get_platform_process_connections(state).await
     }
 }
 
 // 获取系统网络连接列表
+#[cfg(target_os = "macos")]
 pub async fn get_macos_process_connections(
     state: &Arc<AppState>,
 ) -> Result<HashMap<ConnectionKey, ProcessConnection>, String> {

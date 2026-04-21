@@ -37,7 +37,7 @@ impl PcapWriter {
                 let packet = Packet{
                     header: PacketHeader {
                         ts_sec: header.ts.tv_sec as u32,
-                        ts_nsec: (header.ts.tv_usec * 1000i32) as u32,
+                        ts_nsec: (header.ts.tv_usec * 1000i64) as u32,
                         incl_len: header.caplen,
                         orig_len: header.len,
                     },
