@@ -39,8 +39,6 @@ use cmd::connections::{get_connections, stop_capture, get_capture_status};
 use cmd::logs::get_logs;
 
 async fn do_start_capture(state: Arc<AppState>) -> Result<(), String> {
-    *state.running.write().await = true;
-
     let (tx, rx) = tokio::sync::mpsc::channel::<PacketInfo>(10000);
     let (pcap_tx, pcap_rx) = async_channel::unbounded::<(PacketHeader, Vec<u8>)>();
 
@@ -64,10 +62,18 @@ async fn do_start_capture(state: Arc<AppState>) -> Result<(), String> {
 
 #[tauri::command]
 async fn start_capture(state: State<'_, Arc<AppState>>) -> Result<(), String> {
-    if *state.running.read().await {
+    let mut running = state.running.write().await;
+    if *running {
         return Err("capture already running".to_string());
     }
-    do_start_capture(state.inner().clone()).await
+    *running = true;
+    drop(running);
+
+    let state_clone = state.inner().clone();
+    tokio::spawn(async move {
+        let _ = do_start_capture(state_clone).await;
+    });
+    Ok(())
 }
 
 fn init_logging(ws_tx: broadcast::Sender<String>, history: log_ws::LogHistory) -> WorkerGuard {
@@ -142,6 +148,7 @@ pub fn run() {
         let _result = rt.block_on(async move {
             let _ = get_processes(&state_clone).await.unwrap();
             let _ = get_process_connections(&state_clone).await.unwrap();
+            *state_clone.running.write().await = true;
             let _ = do_start_capture(state_clone).await;
         });
     });

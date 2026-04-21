@@ -277,6 +277,11 @@ impl Aggregator {
                 conn.last_bytes_sent = conn.bytes_sent;
                 conn.last_bytes_recv = conn.bytes_recv;
 
+                // 30秒无数据包则标记为已关闭
+                if conn.status == "active" && now.saturating_sub(conn.last_active) > 30 {
+                    conn.status = "closed".to_string();
+                }
+
                 if conn.process_connection.is_none() {
                     pending_lookups.push((conn.id.clone(), ConnectionKey {
                         protocol: conn.protocol.to_lowercase(),
