@@ -71,3 +71,112 @@ impl Packet {
         let _ = self.cursor.seek(SeekFrom::Current(-len));
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_and_len() {
+        let p = Packet::new(vec![1, 2, 3]);
+        assert_eq!(p.len(), 3);
+    }
+
+    #[test]
+    fn test_is_end_empty() {
+        let p = Packet::new(vec![]);
+        assert!(p.is_end());
+    }
+
+    #[test]
+    fn test_is_end_after_read_all() {
+        let mut p = Packet::new(vec![0xAA]);
+        assert!(!p.is_end());
+        p.read_u8();
+        assert!(p.is_end());
+    }
+
+    #[test]
+    fn test_read_u8() {
+        let mut p = Packet::new(vec![0x42]);
+        assert_eq!(p.read_u8(), 0x42);
+    }
+
+    #[test]
+    fn test_read_u16() {
+        let mut p = Packet::new(vec![0x01, 0x02]);
+        assert_eq!(p.read_u16(), 0x0102);
+    }
+
+    #[test]
+    fn test_read_u32() {
+        let mut p = Packet::new(vec![0x00, 0x01, 0x00, 0x02]);
+        assert_eq!(p.read_u32(), 0x00010002);
+    }
+
+    #[test]
+    fn test_read_u64() {
+        let mut p = Packet::new(vec![0, 0, 0, 0, 0, 0, 0, 0xFF]);
+        assert_eq!(p.read_u64(), 255);
+    }
+
+    #[test]
+    fn test_read_bytes() {
+        let mut p = Packet::new(vec![10, 20, 30, 40]);
+        assert_eq!(p.read_bytes(2), vec![10, 20]);
+        assert_eq!(p.read_bytes(2), vec![30, 40]);
+    }
+
+    #[test]
+    fn test_read_h2c_length() {
+        // 3-byte big-endian: high=0x01, low=0x0002 → (1 << 16) | 2 = 65538
+        let mut p = Packet::new(vec![0x01, 0x00, 0x02]);
+        assert_eq!(p.read_h2c_length(), 65538);
+    }
+
+    #[test]
+    fn test_read_h2c_length_zero() {
+        let mut p = Packet::new(vec![0x00, 0x00, 0x00]);
+        assert_eq!(p.read_h2c_length(), 0);
+    }
+
+    #[test]
+    fn test_revert() {
+        let mut p = Packet::new(vec![0xAA, 0xBB, 0xCC]);
+        p.read_u8(); // pos=1
+        p.read_u8(); // pos=2
+        p.revert(2); // pos=0
+        assert_eq!(p.read_u8(), 0xAA);
+    }
+
+    #[test]
+    fn test_read_length_small() {
+        // n=0x05, high nibble=0 != 4, returns 5 as u16
+        let mut p = Packet::new(vec![0x05]);
+        assert_eq!(p.read_length(), 5);
+    }
+
+    #[test]
+    fn test_read_length_two_byte() {
+        // n=0x40 → high nibble=4, revert 1, read u16=0x4001, masked &0x7ff = 1
+        let mut p = Packet::new(vec![0x40, 0x01]);
+        assert_eq!(p.read_length(), 1);
+    }
+
+    #[test]
+    fn test_read_padding_skips_zeros() {
+        let mut p = Packet::new(vec![0x00, 0x00, 0x00, 0x42, 0x99]);
+        p.read_padding();
+        // Should have consumed 3 zeros, reverted on 0x42
+        assert_eq!(p.read_u8(), 0x42);
+    }
+
+    #[test]
+    fn test_sequential_reads() {
+        let mut p = Packet::new(vec![0x01, 0x00, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09]);
+        assert_eq!(p.read_u8(), 0x01);
+        assert_eq!(p.read_u16(), 0x0002);
+        assert_eq!(p.read_u32(), 0x03040506);
+        assert_eq!(p.read_bytes(3), vec![0x07, 0x08, 0x09]);
+        assert!(p.is_end());
+    }
+}

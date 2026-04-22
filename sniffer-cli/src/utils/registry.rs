@@ -156,3 +156,117 @@ impl Registry{
     }
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Use unique keys per test to avoid interference from shared global state.
+
+    #[test]
+    fn test_set_and_get_string() {
+        let key = "test_reg_str_1";
+        Registry::set(key, "hello".to_string(), Some(60));
+        let val: Option<String> = Registry::get(key);
+        assert_eq!(val.unwrap(), "hello");
+        Registry::remove(key);
+    }
+
+    #[test]
+    fn test_set_and_get_i32() {
+        let key = "test_reg_i32_1";
+        Registry::set(key, 42i32, Some(60));
+        let val: Option<i32> = Registry::get(key);
+        assert_eq!(val.unwrap(), 42);
+        Registry::remove(key);
+    }
+
+    #[test]
+    fn test_get_wrong_type_returns_none() {
+        let key = "test_reg_wrongtype_1";
+        Registry::set(key, 42i32, Some(60));
+        let val: Option<String> = Registry::get(key);
+        assert!(val.is_none());
+        Registry::remove(key);
+    }
+
+    #[test]
+    fn test_get_nonexistent_returns_none() {
+        let val: Option<String> = Registry::get("test_reg_nonexistent_key_xyz");
+        assert!(val.is_none());
+    }
+
+    #[test]
+    fn test_remove_existing_key() {
+        let key = "test_reg_remove_1";
+        Registry::set(key, "value".to_string(), Some(60));
+        assert!(Registry::remove(key));
+        let val: Option<String> = Registry::get(key);
+        assert!(val.is_none());
+    }
+
+    #[test]
+    fn test_remove_nonexistent_key() {
+        assert!(!Registry::remove("test_reg_remove_nonexistent_xyz"));
+    }
+
+    #[test]
+    fn test_set_overwrite() {
+        let key = "test_reg_overwrite_1";
+        Registry::set(key, "first".to_string(), Some(60));
+        Registry::set(key, "second".to_string(), Some(60));
+        let val: Option<String> = Registry::get(key);
+        assert_eq!(val.unwrap(), "second");
+        Registry::remove(key);
+    }
+
+    #[test]
+    fn test_set_with_zero_timeout_no_expiry_tracking() {
+        // timeout=0 means no expiry tracking (the if timeout > 0 branch)
+        let key = "test_reg_zero_timeout_1";
+        Registry::set(key, "persistent".to_string(), Some(0));
+        let val: Option<String> = Registry::get(key);
+        assert_eq!(val.unwrap(), "persistent");
+        Registry::remove(key);
+    }
+
+    #[test]
+    fn test_set_default_timeout() {
+        // None defaults to 60 seconds
+        let key = "test_reg_default_timeout_1";
+        Registry::set(key, 99i32, None);
+        let val: Option<i32> = Registry::get(key);
+        assert_eq!(val.unwrap(), 99);
+        Registry::remove(key);
+    }
+
+    #[test]
+    fn test_set_vec_type() {
+        let key = "test_reg_vec_1";
+        Registry::set(key, vec![1u8, 2, 3], Some(60));
+        let val: Option<Vec<u8>> = Registry::get(key);
+        assert_eq!(val.unwrap(), vec![1, 2, 3]);
+        Registry::remove(key);
+    }
+
+    #[test]
+    fn test_update_expired_creates_entry() {
+        let key = "test_reg_expired_create_1".to_string();
+        Registry::set(key.clone(), "data".to_string(), Some(60));
+        // Key should still be accessible (not expired)
+        let val: Option<String> = Registry::get(key.clone());
+        assert_eq!(val.unwrap(), "data");
+        Registry::remove(key);
+    }
+
+    #[test]
+    fn test_update_expired_refreshes_timestamp() {
+        let key = "test_reg_expired_refresh_1".to_string();
+        Registry::set(key.clone(), "data".to_string(), Some(60));
+        // Call update_expired again with a longer timeout
+        Registry::update_expired(key.clone(), 120);
+        let val: Option<String> = Registry::get(key.clone());
+        assert_eq!(val.unwrap(), "data");
+        Registry::remove(key);
+    }
+}

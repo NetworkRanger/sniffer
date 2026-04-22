@@ -13,3 +13,22 @@ impl Config {
         }
     }
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_new_defaults() {
+        let config = Config::new();
+        assert_eq!(config.freq, 3000);
+        assert!(config.has_domain);
+    }
+
+    #[test]
+    fn test_config_clone() {
+        let config = Config::new();
+        let cloned = config.clone();
+        assert_eq!(cloned.freq, config.freq);
+        assert_eq!(cloned.has_domain, config.has_domain);
+    }
+}
