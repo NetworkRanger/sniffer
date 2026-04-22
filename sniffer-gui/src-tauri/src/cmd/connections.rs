@@ -37,7 +37,7 @@ pub async fn get_connections(
         }
     }
 
-    let limit = limit.unwrap_or(50);
+    let limit = limit.unwrap_or(200);
     let result: Vec<Connection> = list.into_iter().take(limit).collect();
     info!("result len: {}", result.len());
     Ok(result)

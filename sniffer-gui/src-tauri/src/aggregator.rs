@@ -277,6 +277,11 @@ impl Aggregator {
                 conn.last_bytes_sent = conn.bytes_sent;
                 conn.last_bytes_recv = conn.bytes_recv;
 
+                // 30秒无数据包则标记为已关闭
+                if conn.status == "active" && now.saturating_sub(conn.last_active) > 30 {
+                    conn.status = "closed".to_string();
+                }
+
                 if conn.process_connection.is_none() {
                     pending_lookups.push((conn.id.clone(), ConnectionKey {
                         protocol: conn.protocol.to_lowercase(),
@@ -288,7 +293,12 @@ impl Aggregator {
                 }
             }
 
-            // 计算速率
+            // 计算速率（用增量而非累计值）
+            let mut history = state.stats_history.write().await;
+            let (last_sent, last_recv) = history.last()
+                .map(|s| (s.total_bytes_sent, s.total_bytes_recv))
+                .unwrap_or((0, 0));
+
             let stats = NetworkStats {
                 timestamp: now,
                 total_bytes_sent: total_sent,
@@ -296,11 +306,10 @@ impl Aggregator {
                 total_packets,
                 active_connections: connections.len(),
                 top_connections: connections.into_iter().take(10).collect(),
-                upload_speed: total_sent * 1000 / millis,
-                download_speed: total_recv * 1000 / millis,
+                upload_speed: total_sent.saturating_sub(last_sent) * 1000 / millis,
+                download_speed: total_recv.saturating_sub(last_recv) * 1000 / millis,
             };
 
-            let mut history = state.stats_history.write().await;
             history.push(stats);
             if history.len() > 300 {
                 history.remove(0);

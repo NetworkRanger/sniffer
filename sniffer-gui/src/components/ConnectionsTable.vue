@@ -51,8 +51,7 @@ function fmtDuration(ms: number): string {
 }
 
 function getDurationMs(row: Connection): number {
-  const nowUs = Date.now() * 1000;
-  const endUs = row.status === 'closed' ? row.last_active * 1_000_000 : nowUs;
+  const endUs = row.last_active * 1_000_000;
   const startUs = row.start_time_us || row.start_time * 1_000_000;
   return Math.max(0, Math.floor((endUs - startUs) / 1000));
 }
@@ -61,21 +60,20 @@ function getDurationMs(row: Connection): number {
 interface ColDef {
   key: string;
   label: string;
-  width?: number;
   minWidth?: number;
   align?: 'left' | 'right' | 'center';
   visible: boolean;
 }
 
 const columns = ref<ColDef[]>([
-  {key: 'process_group',  label: '进程',      width: 150, visible: true},
-  {key: 'protocol_group', label: '协议',      width: 80,  visible: true},
-  {key: 'traffic',        label: '流量',      width: 200, align: 'center', visible: true},
-  {key: 'addr_group',     label: '地址',      width: 160, visible: true},
-  {key: 'status',         label: '状态',      width: 95,  visible: true},
-  {key: 'domain_group',   label: '域名/路径', width: 160, visible: true},
-  {key: 'time_group',     label: '时间',      width: 175, visible: true},
-  {key: 'duration',       label: '持续时间',  width: 120,  align: 'center', visible: true},
+  {key: 'process_group',  label: '进程',      minWidth: 15, visible: true},
+  {key: 'protocol_group', label: '协议',      minWidth: 7,  visible: true},
+  {key: 'traffic',        label: '流量',      minWidth: 23, align: 'center', visible: true},
+  {key: 'addr_group',     label: '地址',      minWidth: 13, visible: true},
+  {key: 'status',         label: '状态',      minWidth: 6,  visible: true},
+  {key: 'domain_group',   label: '域名/路径', minWidth: 13, visible: true},
+  {key: 'time_group',     label: '时间',      minWidth: 14, visible: true},
+  {key: 'duration',       label: '持续时间',  minWidth: 9,  align: 'center', visible: true},
 ]);
 
 const showColMenu = ref(false);
@@ -84,11 +82,11 @@ defineExpose({columns, showColMenu});
 </script>
 
 <template>
-    <el-table :data="connections" size="default" stripe border>
+    <el-table :data="connections" size="default" stripe border height="100%">
       <template v-for="col in columns" :key="col.key">
         <!-- 流量列：嵌套分组，双行表头 TX/RX/TOTAL -->
         <el-table-column v-if="col.key === 'traffic' && col.visible" label="流量" resizable>
-          <el-table-column label="TX" width="100" align="right" resizable>
+          <el-table-column label="TX" min-width="7.5" align="right" resizable>
             <template #header>
               <div class="traffic-header">
                 <span class="traffic-bps">下载速度</span>
@@ -102,7 +100,7 @@ defineExpose({columns, showColMenu});
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="RX" width="100" align="right" resizable>
+          <el-table-column label="RX" min-width="7.5" align="right" resizable>
             <template #header>
               <div class="traffic-header">
                 <span class="traffic-bps">上传速度</span>
@@ -116,7 +114,7 @@ defineExpose({columns, showColMenu});
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="TOTAL" width="100" align="right" resizable>
+          <el-table-column label="TOTAL" min-width="7.5" align="right" resizable>
             <template #header>
               <div class="traffic-header">
                 <span class="traffic-bps">总网速</span>
@@ -133,7 +131,7 @@ defineExpose({columns, showColMenu});
         </el-table-column>
 
         <!-- 协议列：传输协议 / 应用协议 上下显示 -->
-        <el-table-column v-else-if="col.key === 'protocol_group' && col.visible" label="协议" width="100" align="center" resizable>
+        <el-table-column v-else-if="col.key === 'protocol_group' && col.visible" label="协议" min-width="7" align="center" resizable>
           <template #header>
             <div class="traffic-header">
               <span class="traffic-bps">传输协议</span>
@@ -149,7 +147,7 @@ defineExpose({columns, showColMenu});
         </el-table-column>
 
         <!-- 地址列：本地地址 / 远程地址 上下显示 -->
-        <el-table-column v-else-if="col.key === 'addr_group' && col.visible" label="地址" width="160" resizable>
+        <el-table-column v-else-if="col.key === 'addr_group' && col.visible" label="地址" min-width="13" resizable>
           <template #header>
             <div class="traffic-header">
               <span class="traffic-bps">本地地址</span>
@@ -165,7 +163,7 @@ defineExpose({columns, showColMenu});
         </el-table-column>
 
         <!-- 进程列：进程名称 / 进程ID 上下显示 -->
-        <el-table-column v-else-if="col.key === 'process_group' && col.visible" label="进程" width="200" resizable>
+        <el-table-column v-else-if="col.key === 'process_group' && col.visible" label="进程" min-width="15" resizable>
           <template #header>
             <div class="traffic-header">
               <span class="traffic-bps">进程名称</span>
@@ -187,7 +185,7 @@ defineExpose({columns, showColMenu});
         </el-table-column>
 
         <!-- 域名列：域名 / 路径 上下显示 -->
-        <el-table-column v-else-if="col.key === 'domain_group' && col.visible" label="域名/路径" width="160" resizable>
+        <el-table-column v-else-if="col.key === 'domain_group' && col.visible" label="域名/路径" min-width="13" resizable>
           <template #header>
             <div class="traffic-header">
               <span class="traffic-bps">域名</span>
@@ -203,7 +201,7 @@ defineExpose({columns, showColMenu});
         </el-table-column>
 
         <!-- 时间列：活跃时间 / 启动时间 上下显示 -->
-        <el-table-column v-else-if="col.key === 'time_group' && col.visible" label="时间" width="175" resizable>
+        <el-table-column v-else-if="col.key === 'time_group' && col.visible" label="时间" min-width="14" resizable>
           <template #header>
             <div class="traffic-header">
               <span class="traffic-bps">活跃时间</span>
@@ -222,7 +220,6 @@ defineExpose({columns, showColMenu});
         <el-table-column
             v-else-if="!['traffic','protocol_group','addr_group','process_group','domain_group','time_group'].includes(col.key) && col.visible"
             :label="col.label"
-            :width="col.width"
             :min-width="col.minWidth"
             :align="col.align || 'left'"
             resizable>
