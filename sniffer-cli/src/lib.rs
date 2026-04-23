@@ -49,11 +49,7 @@ pub fn cli_run() {
         .iter()
         .filter(|d| {
             d.flags.connection_status == pcap::ConnectionStatus::Connected && d.addresses.len() > 0
-<<<<<<< Updated upstream:sniffer-cli/src/lib.rs
-        })     
-=======
         })
->>>>>>> Stashed changes:src/main.rs
         .next()
         .expect("no device available");
     
