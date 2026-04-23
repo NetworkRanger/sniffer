@@ -35,7 +35,7 @@ use std::io;
 use tracing_appender::non_blocking::WorkerGuard;
 
 use cmd::stats::get_network_stats;
-use cmd::connections::{get_connections, stop_capture, get_capture_status};
+use cmd::connections::{get_connections, stop_capture, get_capture_status, get_grouped_connections};
 use cmd::logs::get_logs;
 
 async fn do_start_capture(state: Arc<AppState>) -> Result<(), String> {
@@ -158,6 +158,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_network_stats,
             get_connections,
+            get_grouped_connections,
             get_logs,
             start_capture,
             stop_capture,
