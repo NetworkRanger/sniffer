@@ -55,6 +55,21 @@ export interface Connection {
     isDelted?: boolean; // 标记是否为即将删除的连接
 }
 
+export interface ProcessGroup {
+    pid: number | null;
+    process_name: string | null;
+    kernel_name: string | null;
+    icon: string | null;
+    connections: Connection[];
+}
+
+// 树形表格行：group 行或 connection 行
+export interface TreeRow extends Connection {
+    _isGroup?: boolean;
+    children?: Connection[];
+    hasChildren?: boolean;
+}
+
 // 进程详情类型定义
 export interface ProcessDetails {
     pid: number;

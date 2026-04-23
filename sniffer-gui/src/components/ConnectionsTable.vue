@@ -1,10 +1,19 @@
 <script setup lang="ts">
-import type {Connection} from "../types/connection";
+import type {Connection, TreeRow} from "../types/connection";
 import {filesize} from "filesize";
 import {ref} from "vue";
 
 
-defineProps<{ connections: Connection[] }>();
+defineProps<{ connections: TreeRow[] }>();
+const emit = defineEmits<{ 'sort-change': [payload: { prop: string | null; order: string | null }] }>();
+
+const sortOrders = ['descending', 'ascending', null] as const;
+
+function onSortChange({ prop, order }: { prop: string | null; order: string | null }) {
+  emit('sort-change', { prop, order });
+}
+
+const isGroup = (row: any): boolean => !!row._isGroup;
 
 const bytesize = (bytes: number) =>
     filesize(bytes, {base: 2, standard: "jedec", round: 1}).replace(" ", "");
@@ -82,11 +91,15 @@ defineExpose({columns, showColMenu});
 </script>
 
 <template>
-    <el-table :data="connections" size="default" stripe border height="100%">
+    <el-table :data="connections" size="default" stripe border height="100%"
+              row-key="id" :tree-props="{ children: 'children', hasChildren: 'hasChildren' }"
+              @sort-change="onSortChange">
+      <!-- 展开按钮独立列 -->
+      <el-table-column width="36" align="center" class-name="expand-col" />
       <template v-for="col in columns" :key="col.key">
         <!-- 流量列：嵌套分组，双行表头 TX/RX/TOTAL -->
         <el-table-column v-if="col.key === 'traffic' && col.visible" label="流量" resizable>
-          <el-table-column label="TX" min-width="7.5" align="right" resizable>
+          <el-table-column label="TX" min-width="7.5" align="right" resizable sortable="custom" prop="bytes_sent" :sort-orders="sortOrders">
             <template #header>
               <div class="traffic-header">
                 <span class="traffic-bps">下载速度</span>
@@ -100,7 +113,7 @@ defineExpose({columns, showColMenu});
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="RX" min-width="7.5" align="right" resizable>
+          <el-table-column label="RX" min-width="7.5" align="right" resizable sortable="custom" prop="bytes_recv" :sort-orders="sortOrders">
             <template #header>
               <div class="traffic-header">
                 <span class="traffic-bps">上传速度</span>
@@ -114,7 +127,7 @@ defineExpose({columns, showColMenu});
               </div>
             </template>
           </el-table-column>
-          <el-table-column label="TOTAL" min-width="7.5" align="right" resizable>
+          <el-table-column label="TOTAL" min-width="7.5" align="right" resizable sortable="custom" prop="total_bytes" :sort-orders="sortOrders">
             <template #header>
               <div class="traffic-header">
                 <span class="traffic-bps">总网速</span>
@@ -171,7 +184,17 @@ defineExpose({columns, showColMenu});
             </div>
           </template>
           <template #default="{ row }">
-            <div class="traffic-cell" style="align-items:flex-start;">
+            <div v-if="isGroup(row)" class="traffic-cell" style="align-items:flex-start;">
+              <div class="proc-cell">
+                <img v-if="row.process_connection?.icon"
+                     :src="'data:image/png;base64,' + row.process_connection.icon"
+                     class="proc-icon"
+                     @error="(e: Event) => (e.target as HTMLImageElement).style.display = 'none'" />
+                <span class="traffic-bps" style="font-weight:600;">{{ fmtProcName(row.process_connection) }}</span>
+              </div>
+              <span class="traffic-total">{{ row.process_connection?.pid || '-' }} ({{ row.children?.length ?? 0 }})</span>
+            </div>
+            <div v-else class="traffic-cell" style="align-items:flex-start;">
               <div class="proc-cell">
                 <img v-if="row.process_connection?.icon"
                      :src="'data:image/png;base64,' + row.process_connection.icon"
@@ -201,7 +224,7 @@ defineExpose({columns, showColMenu});
         </el-table-column>
 
         <!-- 时间列：活跃时间 / 启动时间 上下显示 -->
-        <el-table-column v-else-if="col.key === 'time_group' && col.visible" label="时间" min-width="14" resizable>
+        <el-table-column v-else-if="col.key === 'time_group' && col.visible" label="时间" min-width="14" resizable sortable="custom" prop="last_active" :sort-orders="sortOrders">
           <template #header>
             <div class="traffic-header">
               <span class="traffic-bps">活跃时间</span>
@@ -216,17 +239,30 @@ defineExpose({columns, showColMenu});
           </template>
         </el-table-column>
 
-        <!-- 其他列 -->
+        <!-- 状态列 -->
         <el-table-column
-            v-else-if="!['traffic','protocol_group','addr_group','process_group','domain_group','time_group'].includes(col.key) && col.visible"
-            :label="col.label"
+            v-else-if="col.key === 'status' && col.visible"
+            label="状态"
             :min-width="col.minWidth"
-            :align="col.align || 'left'"
-            resizable>
-          <template #default="{ row }">
-            <template v-if="col.key === 'status'">{{ row.status }}</template>
-            <template v-else-if="col.key === 'duration'">{{ fmtDuration(getDurationMs(row)) }}</template>
-          </template>
+            align="left"
+            resizable
+            sortable="custom"
+            prop="status"
+            :sort-orders="sortOrders">
+          <template #default="{ row }">{{ row.status }}</template>
+        </el-table-column>
+
+        <!-- 持续时间列 -->
+        <el-table-column
+            v-else-if="col.key === 'duration' && col.visible"
+            label="持续时间"
+            :min-width="col.minWidth"
+            align="center"
+            resizable
+            sortable="custom"
+            prop="duration"
+            :sort-orders="sortOrders">
+          <template #default="{ row }">{{ fmtDuration(getDurationMs(row)) }}</template>
         </el-table-column>
       </template>
     </el-table>
@@ -274,5 +310,44 @@ defineExpose({columns, showColMenu});
 :deep(.el-table__header-wrapper th .cell) {
   justify-content: center;
   text-align: center;
+}
+
+/* 展开按钮独立列 */
+:deep(.expand-col .cell) {
+  padding: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* 去掉展开按钮的背景和边框 */
+:deep(.el-table__expand-icon) {
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+/* 去掉排序箭头区域的背景，默认隐藏 */
+:deep(.caret-wrapper) {
+  background: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  opacity: 0 !important;
+  transition: opacity 0.2s;
+}
+
+/* hover 表头时显示排序图标 */
+:deep(th:hover .caret-wrapper) {
+  opacity: 1 !important;
+}
+
+/* 激活排序时始终显示 */
+:deep(th.ascending .caret-wrapper),
+:deep(th.descending .caret-wrapper) {
+  opacity: 1 !important;
+}
+
+:deep(.sort-caret) {
+  background: none !important;
 }
 </style>

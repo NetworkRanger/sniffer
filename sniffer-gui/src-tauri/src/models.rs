@@ -37,6 +37,15 @@ pub struct Connection {
 }
 
 #[derive(Serialize, Clone, Debug)]
+pub struct ProcessGroup {
+    pub pid: Option<u32>,
+    pub process_name: Option<String>,
+    pub kernel_name: Option<String>,
+    pub icon: Option<String>,
+    pub connections: Vec<Connection>,
+}
+
+#[derive(Serialize, Clone, Debug)]
 pub struct NetworkStats {
     pub timestamp: u64,
     pub total_bytes_sent: u64,

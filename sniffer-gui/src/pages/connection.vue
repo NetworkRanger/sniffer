@@ -1,48 +1,43 @@
 <script setup lang="ts">
 import {computed, nextTick, onMounted, onUnmounted, ref, watch} from "vue";
 import {invoke} from "@tauri-apps/api/core";
-import type {Connection} from "../types/connection";
+import type {Connection, ProcessGroup, TreeRow} from "../types/connection";
 import {filesize} from "filesize";
 import ConnectionsTable from "../components/ConnectionsTable.vue";
 import StatusBar from "../components/StatusBar.vue";
 
 const tableRef = ref<InstanceType<typeof ConnectionsTable>>();
 
-const connections = ref<Connection[]>([]);
+const groups = ref<ProcessGroup[]>([]);
 const activeTab = ref<'active' | 'closed'>('active');
 const filter = ref('');
+const appProtoFilter = ref('');
+const protoOptions = ['TCP', 'UDP', 'HTTP', 'HTTPS', 'H2C', 'QUIC', 'DNS'];
 const capturing = ref(true); // 启动时默认抓包中
-
-type SortField = 'last_active' | 'bytes_sent' | 'bytes_recv' | 'upload_speed' | 'download_speed';
-const sortField = ref<SortField>('last_active');
-const sortOptions: { label: string; value: SortField }[] = [
-  {label: '时间', value: 'last_active'},
-  {label: '上传量', value: 'bytes_sent'},
-  {label: '下载量', value: 'bytes_recv'},
-  {label: '上传速度', value: 'upload_speed'},
-  {label: '下载速度', value: 'download_speed'},
-];
-const sortLabel = computed(() => sortOptions.find(o => o.value === sortField.value)?.label ?? '时间');
 
 let autoRefreshTimer: number | null = null;
 
 const bytesize = (bytes: number) =>
     filesize(bytes, {base: 2, standard: "jedec", round: 1}).replace(" ", "");
 
+// 所有连接的扁平列表（用于统计）
+const allConnections = computed(() =>
+    groups.value.flatMap(g => g.connections));
+
 const totalDownload = computed(() =>
-    bytesize(connections.value.reduce((s, c) => s + c.bytes_recv, 0)));
+    bytesize(allConnections.value.reduce((s, c) => s + c.bytes_recv, 0)));
 
 const totalUpload = computed(() =>
-    bytesize(connections.value.reduce((s, c) => s + c.bytes_sent, 0)));
+    bytesize(allConnections.value.reduce((s, c) => s + c.bytes_sent, 0)));
 
-const activeList = computed(() =>
-    connections.value.filter(c => !c.isDelted && c.status !== 'closed'));
+const activeCount = computed(() =>
+    allConnections.value.filter(c => !c.isDelted && c.status !== 'closed').length);
 
-const closedList = computed(() =>
-    connections.value.filter(c => c.isDelted || c.status === 'closed'));
+const closedCount = computed(() =>
+    allConnections.value.filter(c => c.isDelted || c.status === 'closed').length);
 
 const statusBar = computed(() => {
-  const all = connections.value;
+  const all = allConnections.value;
   return {
     totalConnections: all.length,
     tcpConnections: all.filter(c => c.protocol === 'TCP').length,
@@ -52,61 +47,133 @@ const statusBar = computed(() => {
   };
 });
 
-const filteredConnections = computed(() => {
-  const list = activeTab.value === 'active' ? activeList.value : closedList.value;
-  if (!filter.value) return list;
-  return list.filter(c => {
-    const host = `${c.domain || c.remote_addr}:${c.remote_port}`;
-    return host.toLowerCase().includes(filter.value.toLowerCase());
-  });
+// 按 active/closed 过滤 group 内的 connections，再过滤掉空 group
+const filteredGroups = computed(() => {
+  const isActive = activeTab.value === 'active';
+  return groups.value
+      .map(g => {
+        const conns = g.connections.filter(c => {
+          const closed = c.isDelted || c.status === 'closed';
+          return isActive ? !closed : closed;
+        }).filter(c => {
+          if (appProtoFilter.value) {
+            const f = appProtoFilter.value.toUpperCase();
+            const match = c.protocol.toUpperCase() === f || (c.app_protocol || '').toUpperCase() === f;
+            if (!match) return false;
+          }
+          if (!filter.value) return true;
+          const host = `${c.domain || c.remote_addr}:${c.remote_port}`;
+          return host.toLowerCase().includes(filter.value.toLowerCase());
+        });
+        return {...g, connections: conns};
+      })
+      .filter(g => g.connections.length > 0);
 });
 
-const mockConnections: Connection[] = Array.from({length: 10}, (_, i) => ({
-  id: `mock-${i}`,
-  local_addr: '192.168.1.100',
-  local_port: 50000 + i,
-  remote_addr: `203.0.113.${i + 1}`,
-  remote_port: [80, 443, 8080, 5228, 8838][i % 5],
-  protocol: i % 2 === 0 ? 'TCP' : 'UDP',
-  app_protocol: i % 2 === 0 ? 'https' : 'udp',
-  domain: [`www.google.com`, `mtalk.google.com`, `api.github.com`, `www.baidu.com`, `cdn.jsdelivr.net`,
-    `fonts.googleapis.com`, `www.msftconnecttest.com`, `update.microsoft.com`, `ocsp.apple.com`, `push.apple.com`][i],
-  path: i % 3 === 0 ? '/api/v1/data' : null,
-  bytes_sent: Math.floor(Math.random() * 100000),
-  bytes_recv: Math.floor(Math.random() * 500000),
-  packets_sent: Math.floor(Math.random() * 200),
-  packets_recv: Math.floor(Math.random() * 800),
-  upload_speed: Math.floor(Math.random() * 5000),
-  download_speed: Math.floor(Math.random() * 20000),
-  start_time: Math.floor(Date.now() / 1000) - 3600 + i * 300,
-  start_time_us: (Date.now() - (3600 - i * 300) * 1000) * 1000,
-  last_active: Math.floor(Date.now() / 1000) - i * 10,
-  status: i < 8 ? 'active' : 'closed',
-  isDelted: i >= 8,
-  process_connection: {
-    protocol: i % 2 === 0 ? 'TCP' : 'UDP',
-    local_addr: '192.168.1.100',
-    local_port: 50000 + i,
-    remote_addr: `203.0.113.${i + 1}`,
-    remote_port: [80, 443, 8080, 5228, 8838][i % 5],
-    state: i < 8 ? 'ESTABLISHED' : 'CLOSED',
-    pid: 1000 + i * 100,
-    process_name: ['Chrome', 'Firefox', 'Safari', 'curl', 'node', 'python3', 'git', 'npm', 'code', 'ssh'][i],
-    kernel_name: i === 4 ? 'node' : null,  // mock: node 进程 kernel_name 与 process_name 相同
-    icon: null,
-    start_time: Math.floor(Date.now() / 1000) - 7200,
-    fill_column: '',
+// 构建 el-table tree 数据
+function buildGroupRow(g: ProcessGroup): TreeRow {
+  const conns = g.connections;
+  const sum = (fn: (c: Connection) => number) => conns.reduce((s, c) => s + fn(c), 0);
+  // 找当前网速最大的连接，用于显示协议、地址、域名、路径、持续时间
+  const top = conns.reduce((best, c) => {
+    const speed = c.upload_speed + c.download_speed;
+    const bestSpeed = best.upload_speed + best.download_speed;
+    return speed > bestSpeed ? c : best;
+  }, conns[0]);
+  return {
+    _isGroup: true,
+    id: `group-${g.pid ?? 'none'}`,
+    local_addr: top?.local_addr ?? '', local_port: top?.local_port ?? 0,
+    remote_addr: top?.remote_addr ?? '', remote_port: top?.remote_port ?? 0,
+    protocol: top?.protocol ?? '', app_protocol: top?.app_protocol ?? '',
+    domain: top?.domain ?? null, path: top?.path ?? null,
+    bytes_sent: sum(c => c.bytes_sent),
+    bytes_recv: sum(c => c.bytes_recv),
+    packets_sent: sum(c => c.packets_sent),
+    packets_recv: sum(c => c.packets_recv),
+    upload_speed: sum(c => c.upload_speed),
+    download_speed: sum(c => c.download_speed),
+    start_time: top?.start_time ?? 0,
+    start_time_us: top?.start_time_us ?? 0,
+    last_active: top?.last_active ?? 0,
+    status: conns.some(c => c.status === 'active') ? 'active' : 'closed',
+    process_connection: conns[0]?.process_connection ?? null,
+    packet_connection: null,
+    children: conns,
+    hasChildren: true,
+  } as TreeRow;
+}
+
+// 列头排序状态
+const colSortProp = ref<string | null>(null);
+const colSortOrder = ref<string | null>(null);
+
+function onTableSortChange({ prop, order }: { prop: string | null; order: string | null }) {
+  colSortProp.value = prop;
+  colSortOrder.value = order;
+}
+
+function getDurationMs(row: Connection): number {
+  const endUs = row.last_active * 1_000_000;
+  const startUs = row.start_time_us || row.start_time * 1_000_000;
+  return Math.max(0, Math.floor((endUs - startUs) / 1000));
+}
+
+function getSortValue(row: TreeRow, prop: string): number | string {
+  switch (prop) {
+    case 'total_bytes': return row.bytes_sent + row.bytes_recv;
+    case 'total_speed': return row.upload_speed + row.download_speed;
+    case 'duration': return getDurationMs(row);
+    case 'status': return row.status;
+    default: return (row as any)[prop] ?? 0;
+  }
+}
+
+const treeData = computed(() => {
+  let rows = filteredGroups.value.map(buildGroupRow);
+  if (colSortProp.value && colSortOrder.value) {
+    const prop = colSortProp.value;
+    const asc = colSortOrder.value === 'ascending' ? 1 : -1;
+    rows.sort((a, b) => {
+      const va = getSortValue(a, prop);
+      const vb = getSortValue(b, prop);
+      if (va < vb) return -1 * asc;
+      if (va > vb) return 1 * asc;
+      return 0;
+    });
+  }
+  return rows;
+});
+
+const mockGroups: ProcessGroup[] = [
+  {
+    pid: 1234, process_name: 'Cursor Helper', kernel_name: 'Cursor Helper', icon: null,
+    connections: [
+      { id: 'mock-1', local_addr: '192.168.1.100', local_port: 52341, remote_addr: '140.82.114.26', remote_port: 443, protocol: 'TCP', app_protocol: 'TLS', domain: 'github.com', path: null, bytes_sent: 204800, bytes_recv: 1048576, packets_sent: 150, packets_recv: 800, upload_speed: 2048, download_speed: 10240, start_time: Math.floor(Date.now()/1000) - 300, start_time_us: (Date.now() - 300000) * 1000, last_active: Math.floor(Date.now()/1000), status: 'active', process_connection: { protocol: 'TCP', local_addr: '192.168.1.100', local_port: 52341, remote_addr: '140.82.114.26', remote_port: 443, state: 'ESTABLISHED', pid: 1234, process_name: 'Cursor Helper', kernel_name: 'Cursor Helper', icon: null, start_time: null, fill_column: '' }, packet_connection: null },
+      { id: 'mock-2', local_addr: '192.168.1.100', local_port: 52342, remote_addr: '20.205.243.166', remote_port: 443, protocol: 'TCP', app_protocol: 'TLS', domain: 'api.github.com', path: '/graphql', bytes_sent: 51200, bytes_recv: 524288, packets_sent: 60, packets_recv: 400, upload_speed: 512, download_speed: 5120, start_time: Math.floor(Date.now()/1000) - 120, start_time_us: (Date.now() - 120000) * 1000, last_active: Math.floor(Date.now()/1000), status: 'active', process_connection: { protocol: 'TCP', local_addr: '192.168.1.100', local_port: 52342, remote_addr: '20.205.243.166', remote_port: 443, state: 'ESTABLISHED', pid: 1234, process_name: 'Cursor Helper', kernel_name: 'Cursor Helper', icon: null, start_time: null, fill_column: '' }, packet_connection: null },
+    ],
   },
-  packet_connection: null,
-}));
+  {
+    pid: 5678, process_name: 'Google Chrome', kernel_name: 'Google Chrome', icon: null,
+    connections: [
+      { id: 'mock-3', local_addr: '192.168.1.100', local_port: 61001, remote_addr: '142.250.80.46', remote_port: 443, protocol: 'TCP', app_protocol: 'HTTP/2', domain: 'www.google.com', path: '/search', bytes_sent: 102400, bytes_recv: 2097152, packets_sent: 200, packets_recv: 1500, upload_speed: 1024, download_speed: 20480, start_time: Math.floor(Date.now()/1000) - 600, start_time_us: (Date.now() - 600000) * 1000, last_active: Math.floor(Date.now()/1000), status: 'active', process_connection: { protocol: 'TCP', local_addr: '192.168.1.100', local_port: 61001, remote_addr: '142.250.80.46', remote_port: 443, state: 'ESTABLISHED', pid: 5678, process_name: 'Google Chrome', kernel_name: 'Google Chrome', icon: null, start_time: null, fill_column: '' }, packet_connection: null },
+    ],
+  },
+  {
+    pid: null, process_name: null, kernel_name: null, icon: null,
+    connections: [
+      { id: 'mock-4', local_addr: '192.168.1.100', local_port: 55555, remote_addr: '8.8.8.8', remote_port: 53, protocol: 'UDP', app_protocol: 'DNS', domain: null, path: null, bytes_sent: 512, bytes_recv: 1024, packets_sent: 4, packets_recv: 4, upload_speed: 0, download_speed: 0, start_time: Math.floor(Date.now()/1000) - 60, start_time_us: (Date.now() - 60000) * 1000, last_active: Math.floor(Date.now()/1000) - 50, status: 'closed', process_connection: null, packet_connection: null },
+    ],
+  },
+];
 
 async function loadConnections() {
   try {
-    const result = await invoke<Connection[]>("get_connections", {sortBy: sortField.value});
-    connections.value = result;
+    const result = await invoke<ProcessGroup[]>("get_grouped_connections");
+    groups.value = result;
   } catch (e) {
-    // fallback to mock data in browser preview
-    connections.value = mockConnections;
+    // mock in browser
+    if (!groups.value.length) groups.value = mockGroups;
   }
 }
 
@@ -154,9 +221,6 @@ onMounted(async () => {
   await nextTick();
 });
 
-// 切换排序时立即重新拉取
-watch(sortField, () => loadConnections());
-
 onUnmounted(() => {
   if (autoRefreshTimer !== null) clearInterval(autoRefreshTimer);
 });
@@ -182,14 +246,17 @@ onUnmounted(() => {
         <button
             :class="['tab-btn', activeTab === 'active' ? 'tab-btn--active' : '']"
             @click="activeTab = 'active'">
-          活跃 {{ activeList.length }}
+          活跃 {{ activeCount }}
         </button>
         <button
             :class="['tab-btn', activeTab === 'closed' ? 'tab-btn--active' : '']"
             @click="activeTab = 'closed'">
-          已关闭 {{ closedList.length }}
+          已关闭 {{ closedCount }}
         </button>
       </div>
+      <el-select v-model="appProtoFilter" placeholder="协议筛选" clearable class="proto-select">
+        <el-option v-for="p in protoOptions" :key="p" :label="p" :value="p" />
+      </el-select>
       <div class="filter-wrap">
         <el-input v-model="filter" placeholder="过滤条件" clearable />
       </div>
@@ -231,24 +298,6 @@ onUnmounted(() => {
           </template>
         </el-dropdown>
       </div>
-      <el-dropdown v-if="false" trigger="click" @command="(v: SortField) => sortField = v">
-        <button class="sort-btn">
-          {{ sortLabel }} <span class="sort-arrow">&#8963;</span>
-        </button>
-        <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item
-                v-for="opt in sortOptions"
-                :key="opt.value"
-                :command="opt.value">
-              <span style="display:flex;align-items:center;gap:6px;">
-                <span style="width:14px;">{{ sortField === opt.value ? '✓' : '' }}</span>
-                {{ opt.label }}
-              </span>
-            </el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
 
       <!-- 列设置 -->
       <el-popover
@@ -270,7 +319,7 @@ onUnmounted(() => {
 
     <!-- Table -->
     <div class="table-area">
-      <ConnectionsTable ref="tableRef" :connections="filteredConnections"/>
+      <ConnectionsTable ref="tableRef" :connections="treeData" @sort-change="onTableSortChange"/>
     </div>
     <StatusBar v-bind="statusBar" />
   </div>
@@ -372,6 +421,11 @@ onUnmounted(() => {
 
 .filter-wrap {
   flex: 1;
+}
+
+.proto-select {
+  width: 120px;
+  flex-shrink: 0;
 }
 
 .refresh-ctrl {
