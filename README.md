@@ -8,7 +8,15 @@
 
 ## GUI
 
-![image-20260414103313998](https://p.ipic.vip/7hfmuo.png)
+![image-20260423161917353](https://p.ipic.vip/erukkl.png)
+
+
+
+![image-20260423161808267](https://p.ipic.vip/twjfx2.png)
+
+
+
+![image-20260423161851970](https://p.ipic.vip/07cdlv.png)
 
 ## 功能特性
 

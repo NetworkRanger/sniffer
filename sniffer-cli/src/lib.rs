@@ -44,7 +44,6 @@ pub fn cli_run() {
     let device_list = Device::list().expect("device list failed");
 
     // 查找默认设备
-    let d = Device::lookup().unwrap().unwrap();
     let device = device_list
         .iter()
         .filter(|d| {
