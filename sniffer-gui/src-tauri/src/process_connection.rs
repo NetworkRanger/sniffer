@@ -7,6 +7,7 @@ use std::sync::Arc;
 use crate::platform::macos::process_connection::MacOSNetMonitor;
 
 // 将 netstat2 的 TCP 状态转换为字符串
+#[allow(dead_code)]
 fn tcp_state_to_string(state: TcpState) -> &'static str {
     match state {
         TcpState::Established => "ESTABLISHED",
@@ -96,6 +97,7 @@ pub async fn get_macos_process_connections(
 }
 
 // 获取系统网络连接列表
+#[allow(dead_code)]
 pub async fn get_platform_process_connections(
     state: &Arc<AppState>,
 ) -> Result<HashMap<ConnectionKey, ProcessConnection>, String> {
