@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import {ref, computed, onMounted, onUnmounted, watch} from 'vue';
+import {ref, computed, onMounted, onUnmounted} from 'vue';
 
 interface Props {
   items: unknown[];
